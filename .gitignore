@@ -1,0 +1,38 @@
+# Compilados y binarios: se distribuyen aparte, nunca en el repo.
+dist/
+*.apk
+*.aab
+
+# Claves de firma y secretos.
+*.jks
+*.keystore
+*.p12
+*.pem
+.env*
+
+# Datos personales: salidas reales y bases de la app.
+*.gpx
+!mobile/__tests__/fixtures/*.gpx
+*.db
+*.db-wal
+*.db-shm
+
+# Mapas de código del bundle.
+*.map
+
+# Exportaciones de la app (traen salidas reales).
+asistente-ciclismo-*.zip
+respaldo*.json
+salidas*.csv
+puntos*.csv
+
+# Documentación interna del proyecto (pedidos, planes): no se publica. Solo el README y docs/logros.md son para visitantes.
+docs/*
+!docs/logros.md
+
+# Archivos internos del proyecto: no se publican.
+CLAUDE.md
+INFORME-SEGURIDAD.md
+mobile/AGENTS.md
+mobile/.claude/
+/scripts/
