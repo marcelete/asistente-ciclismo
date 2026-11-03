@@ -44,6 +44,7 @@ export function WelcomeScreen() {
   const a = settings.athlete;
   const now = useNow(3_600_000);
   const [step, setStep] = useState(0);
+  const [sport, setSport] = useState(settings.sport);
   const [birth, setBirth] = useState(birthDateToText(a.birthDate));
   const [sex, setSex] = useState<Sex>(a.sex ?? 'none');
   const [weight, setWeight] = useState(show(a.weightKg));
@@ -79,7 +80,7 @@ export function WelcomeScreen() {
       hrRest: f.hrRest.value,
     };
     try {
-      await updateSettings({ athlete: sanitizeAthlete(draft), onboardingDone: true, city });
+      await updateSettings({ athlete: sanitizeAthlete(draft), onboardingDone: true, city, sport });
       if (withBike && bike.name.trim() !== '') await saveBike(bike.toBike(defaultBike));
       router.replace('/');
     } catch (e) {
@@ -90,7 +91,7 @@ export function WelcomeScreen() {
 
   const skipAll = async () => {
     try {
-      await updateSettings({ onboardingDone: true });
+      await updateSettings({ onboardingDone: true, sport });
       router.replace('/');
     } catch (e) {
       log('error', 'ui', 'No se pudo cerrar la bienvenida', e);
@@ -111,6 +112,19 @@ export function WelcomeScreen() {
 
       {step === 0 ? (
         <>
+          <Card>
+            <Text style={s.label}>¿Qué querés entrenar?</Text>
+            <Segmented
+              label="Deporte"
+              options={[
+                { value: 'bike', label: 'Bici' },
+                { value: 'run', label: 'Correr' },
+              ]}
+              value={sport}
+              onChange={setSport}
+            />
+            <Text style={s.muted}>Podés cambiarlo cuando quieras con el selector de arriba de cada pestaña: cada deporte tiene sus números.</Text>
+          </Card>
           <Text style={s.body}>
             Con estos datos calculamos tus zonas de frecuencia cardíaca, la carga y la potencia estimada. Quedan solo en este
             celular y los cambiás cuando quieras en Ajustes → Perfil.

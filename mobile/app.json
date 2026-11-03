@@ -2,14 +2,14 @@
   "expo": {
     "name": "Asistente Ciclismo",
     "slug": "asistente-ciclismo",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "scheme": "asistenteciclismo",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.ciclyingasistance.app",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -24,11 +24,20 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.ACCESS_BACKGROUND_LOCATION"
       ]
     },
     "plugins": [
       "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false,
+          "locationWhenInUsePermission": "La ubicación se usa solo con la app abierta, para decirte si vas a la velocidad buscada. No sale del celular."
+        }
+      ],
       [
         "expo-notifications",
         {

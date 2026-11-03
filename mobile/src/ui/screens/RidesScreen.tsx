@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { RefreshControl, SectionList, Text, View } from 'react-native';
 import { monthName } from '../../core/stats/periods';
-import { countsAsRide } from '../../core/stats/sport';
+import { SPORT_WORDS } from '../../core/stats/sport';
+import { SportSwitch } from '../SportSwitch';
 import type { RideRecord } from '../../core/stats/rides';
 import { useStore } from '../../data/store';
 import { log } from '../../services/log';
@@ -23,7 +24,7 @@ interface MonthSection {
 }
 
 /** Agrupa las salidas (ya ordenadas de la más nueva a la más vieja) por mes. */
-function byMonth(rides: RideRecord[]): MonthSection[] {
+function byMonth(rides: RideRecord[], words: { activity: string; activities: string }): MonthSection[] {
   const out: MonthSection[] = [];
   for (const r of rides) {
     const d = new Date(r.startT);
@@ -38,7 +39,7 @@ function byMonth(rides: RideRecord[]): MonthSection[] {
   }
   for (const sec of out) {
     const km = sec.data.reduce((a, r) => a + r.distance, 0);
-    sec.summary = `${sec.data.length} ${sec.data.length === 1 ? 'salida' : 'salidas'} · ${formatKm(km)} km`;
+    sec.summary = `${sec.data.length} ${sec.data.length === 1 ? words.activity : words.activities} · ${formatKm(km)} km`;
   }
   return out;
 }
@@ -82,9 +83,11 @@ export function RidesScreen({ switcher }: { switcher?: ReactNode }) {
   const [note, setNote] = useState<{ text: string; at: number; ok: boolean } | null>(null);
   const [showOthers, setShowOthers] = useState(false);
   const others = allRides.length - rides.length;
+  // Mostrando también las otras actividades, el resumen del mes habla de actividades en general.
+  const { sport } = settings;
   const sections = useMemo(
-    () => byMonth(showOthers ? allRides : allRides.filter(countsAsRide)),
-    [allRides, showOthers],
+    () => byMonth(showOthers ? allRides : rides, showOthers ? { activity: 'actividad', activities: 'actividades' } : SPORT_WORDS[sport]),
+    [allRides, rides, showOthers, sport],
   );
 
   const openTracks = async () => {
@@ -119,7 +122,11 @@ export function RidesScreen({ switcher }: { switcher?: ReactNode }) {
 
   const header = (
     <Column>
-      <ScreenTitle title="Salidas" subtitle={rides.length > 0 ? `${rides.length} en el historial` : undefined} />
+      <ScreenTitle
+        title="Salidas"
+        subtitle={rides.length > 0 ? `${rides.length} ${settings.sport === 'run' ? 'carreras' : 'en bici'} en el historial` : undefined}
+        right={<SportSwitch />}
+      />
       {switcher}
       <PowerSaverNotice />
       {!settings.folderUri ? (
@@ -157,7 +164,7 @@ export function RidesScreen({ switcher }: { switcher?: ReactNode }) {
           <Toggle
             icon="visibility"
             label="Mostrar otras actividades"
-            hint={`${others} ${others === 1 ? 'actividad no cuenta' : 'actividades no cuentan'} como salida en bici (caminatas, por ejemplo). Se ven en la lista pero no suman a nada.`}
+            hint={`${others} ${others === 1 ? 'actividad es' : 'actividades son'} de ${settings.sport === 'run' ? 'bici' : 'correr'} o no cuentan (caminatas, por ejemplo). Las de otro deporte suman en su deporte; las que no cuentan, a nada.`}
             value={showOthers}
             onChange={setShowOthers}
           />

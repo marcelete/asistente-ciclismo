@@ -21,7 +21,7 @@ const PERIODS: { value: GoalPeriod; label: string }[] = [
 
 const METRICS: { value: GoalMetric; label: string; unit: string; toBase: number; max: number; icon: IconName; tone: MetricTone }[] = [
   { value: 'distance', label: 'Distancia', unit: 'km', toBase: 1000, max: 100_000, icon: 'straighten', tone: 'distance' },
-  { value: 'rides', label: 'Salidas', unit: 'salidas', toBase: 1, max: 1000, icon: 'directions_bike', tone: 'distance' },
+  { value: 'rides', label: 'Cantidad', unit: 'salidas', toBase: 1, max: 1000, icon: 'tag', tone: 'distance' },
   { value: 'time', label: 'Tiempo', unit: 'horas', toBase: 3600, max: 5000, icon: 'schedule', tone: 'time' },
   { value: 'elevation', label: 'Desnivel', unit: 'm', toBase: 1, max: 1_000_000, icon: 'trending_up', tone: 'elevation' },
 ];
@@ -29,7 +29,7 @@ const METRICS: { value: GoalMetric; label: string; unit: string; toBase: number;
 const PERIOD_NAME: Record<GoalPeriod, string> = { week: 'semanal', month: 'mensual', year: 'anual' };
 const METRIC_NAME: Record<GoalMetric, string> = {
   distance: 'Distancia',
-  rides: 'Salidas',
+  rides: 'Cantidad de salidas',
   time: 'Tiempo',
   elevation: 'Desnivel positivo',
 };
@@ -90,7 +90,9 @@ function GoalCard({ goal, now, autoPause, onEdit, onDelete }: { goal: Goal; now:
 }
 
 export function GoalsScreen({ switcher }: { switcher?: ReactNode }) {
-  const { goals, settings, addGoal, removeGoal } = useStore();
+  const { goals: allGoals, settings, addGoal, removeGoal } = useStore();
+  // Cada deporte tiene sus metas: se ven y se crean las del deporte elegido.
+  const goals = allGoals.filter((g) => (g.sport ?? 'bike') === settings.sport);
   const now = useNow();
   const s = useStyles();
   const [period, setPeriod] = useState<GoalPeriod>('week');
@@ -118,7 +120,7 @@ export function GoalsScreen({ switcher }: { switcher?: ReactNode }) {
   const create = async () => {
     if (!valid || parsed === null) return;
     try {
-      await addGoal({ period, metric, target: parsed * m.toBase });
+      await addGoal({ period, metric, target: parsed * m.toBase, sport: settings.sport });
       setSaved(existing ? 'Meta actualizada.' : 'Meta agregada.');
       setAmount('');
       setError(null);

@@ -4,7 +4,9 @@ import { Pressable, Text, View } from 'react-native';
 import { fitnessSeries, formStatus, localDateKey } from '../../core/load/training';
 import { monthName, periodBuckets, periodLabel, periodRange, rideCounts, ridesIn, totals } from '../../core/stats/periods';
 import type { Bucket, PeriodKind } from '../../core/stats/periods';
+import { effortDistancesFor } from '../../core/efforts/distanceEfforts';
 import { records } from '../../core/stats/records';
+import { SPORT_WORDS } from '../../core/stats/sport';
 import type { RecordEntry } from '../../core/stats/records';
 import { streak } from '../../core/stats/streaks';
 import { useAwards } from '../../data/awards';
@@ -24,7 +26,9 @@ import {
   formatMeters,
   formatNumber,
   formatRemaining,
+  speedFor,
 } from '../format';
+import { SportSwitch } from '../SportSwitch';
 import { useHrProfile, useNow } from '../hooks';
 import { PowerSaverNotice } from '../PowerSaverNotice';
 import { openRide, RideRow } from '../RideRow';
@@ -50,7 +54,7 @@ const BAR_METRICS: { value: BarMetric; label: string }[] = [
   { value: 'distance', label: 'Distancia' },
   { value: 'time', label: 'Tiempo' },
   { value: 'elevation', label: 'Desnivel' },
-  { value: 'rides', label: 'Salidas' },
+  { value: 'rides', label: 'Cantidad' },
 ];
 
 const WEEKDAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -116,7 +120,8 @@ function PeriodNav({ label, offset, onChange }: { label: string; offset: number;
 }
 
 function StreakCard() {
-  const { rides } = useStore();
+  const { rides, settings } = useStore();
+  const { sport } = settings;
   const now = useNow();
   const s = useStyles();
   const l = useLocal();
@@ -141,16 +146,16 @@ function StreakCard() {
         <Text style={s.h3}>Rachas</Text>
       </View>
       <View style={l.row}>
-        {item('Días seguidos', daily, ['día', 'días'], 'Salí hoy para seguirla')}
-        {item('Semanas seguidas', weekly, ['semana', 'semanas'], 'Falta salir esta semana')}
+        {item('Días seguidos', daily, ['día', 'días'], sport === 'run' ? 'Corré hoy para seguirla' : 'Salí hoy para seguirla')}
+        {item('Semanas seguidas', weekly, ['semana', 'semanas'], sport === 'run' ? 'Falta correr esta semana' : 'Falta salir esta semana')}
       </View>
     </Card>
   );
 }
 
-/** Estado físico, fatiga y forma de los últimos 90 días, a partir de la FC. */
+/** Estado físico, fatiga y forma de los últimos 90 días, a partir de la FC (bici y correr juntos). */
 function FitnessCard() {
-  const { rides } = useStore();
+  const { trainingRides: rides } = useStore();
   const hr = useHrProfile();
   const now = useNow();
   const s = useStyles();
@@ -215,7 +220,7 @@ function FitnessCard() {
         a11yLabel={`Estado físico ${formatNumber(last.ctl)}, fatiga ${formatNumber(last.atl)}, forma ${formatNumber(last.tsb)} en los últimos ${series.length} días`}
       />
       <Text style={s.muted}>
-        Se calcula con la FC de cada salida (una hora a tu umbral suma 100 puntos).
+        Se calcula con la FC de cada salida, en bici y corriendo (una hora a tu umbral suma 100 puntos).
         {hr.maxSource !== 'perfil' ? ' La FC máxima es estimada: cargala en Perfil para más precisión.' : ''}
       </Text>
     </Card>
@@ -273,20 +278,30 @@ function RecordRow({
 }
 
 function RecordsCard() {
-  const { rides } = useStore();
+  const { rides, settings } = useStore();
+  const { sport } = settings;
+  const run = sport === 'run';
   const s = useStyles();
   const t = useTheme();
-  const r = useMemo(() => records(rides), [rides]);
+  const r = useMemo(() => records(rides, sport), [rides, sport]);
+  const own = effortDistancesFor(sport);
   const efforts = Object.entries(r.bestEfforts)
     .map(([d, e]) => [Number(d), e] as [number, RecordEntry])
+    .filter(([d]) => own.includes(d))
     .sort((a, b) => a[0] - b[0]);
+  const sp = (mps: number) => {
+    const x = speedFor(sport, mps);
+    return `${x.value} ${x.unit}`;
+  };
   const rows: [IconName, string, string, string, RecordEntry | null][] = [
-    ['straighten', t.metric.distance, 'Salida más larga', r.longestDistance ? `${formatKm(r.longestDistance.value)} km` : '', r.longestDistance],
+    ['straighten', t.metric.distance, run ? 'Carrera más larga' : 'Salida más larga', r.longestDistance ? `${formatKm(r.longestDistance.value)} km` : '', r.longestDistance],
     ['schedule', t.metric.time, 'Más tiempo en movimiento', r.longestMoving ? formatDuration(r.longestMoving.value) : '', r.longestMoving],
     ['trending_up', t.metric.elevation, 'Mayor desnivel', r.maxGain ? `${formatMeters(r.maxGain.value)} m` : '', r.maxGain],
     ['landscape', t.metric.elevation, 'Altitud más alta', r.maxAltitude ? `${formatMeters(r.maxAltitude.value)} m` : '', r.maxAltitude],
-    ['speed', t.metric.speed, 'Velocidad máxima', r.maxSpeed ? `${formatKmh(r.maxSpeed.value)} km/h` : '', r.maxSpeed],
-    ['avg_pace', t.metric.speed, 'Mejor velocidad media (10 km o más)', r.fastestAvgSpeed ? `${formatKmh(r.fastestAvgSpeed.value)} km/h` : '', r.fastestAvgSpeed],
+    ...(run
+      ? []
+      : ([['speed', t.metric.speed, 'Velocidad máxima', r.maxSpeed ? sp(r.maxSpeed.value) : '', r.maxSpeed]] as [IconName, string, string, string, RecordEntry | null][])),
+    ['avg_pace', t.metric.speed, run ? 'Mejor ritmo medio (5 km o más)' : 'Mejor velocidad media (10 km o más)', r.fastestAvgSpeed ? sp(r.fastestAvgSpeed.value) : '', r.fastestAvgSpeed],
   ];
   return (
     <>
@@ -326,11 +341,11 @@ function RecordsCard() {
                 icon="emoji_events"
                 color={t.warn}
                 label={formatEffortDistance(d)}
-                value={`${formatDuration(e.value)} · ${formatKmh(d / e.value)} km/h`}
+                value={`${formatDuration(e.value)} · ${sp(d / e.value)}`}
                 entry={e}
               />
             ))}
-            <Text style={s.muted}>El tramo más rápido de esa distancia dentro de una salida, con las paradas incluidas.</Text>
+            <Text style={s.muted}>El tramo más rápido de esa distancia dentro de una {run ? 'carrera' : 'salida'}, con las paradas incluidas.</Text>
           </Card>
         </>
       ) : null}
@@ -347,7 +362,10 @@ export function StatsScreen() {
   const [kind, setKind] = useState<PeriodKind>('week');
   const [offset, setOffset] = useState(0);
   const [barMetric, setBarMetric] = useState<BarMetric>('distance');
-  const { autoPause } = settings;
+  const { autoPause, sport } = settings;
+  const words = SPORT_WORDS[sport];
+  const switcher = <SportSwitch />;
+  const sp = (mps: number) => speedFor(sport, mps);
 
   // Son sumas sobre unas cientos de salidas: se recalculan en cada render sin costo apreciable.
   const counts = rideCounts(rides, now);
@@ -366,13 +384,17 @@ export function StatsScreen() {
 
   if (rides.length === 0) {
     return (
-      <Screen title="Resumen">
+      <Screen title="Resumen" right={switcher}>
         <PowerSaverNotice />
         <Card>
           <EmptyState
-            icon="directions_bike"
-            title="Todavía no hay salidas"
-            text="Grabá con OpenTracks y elegí su carpeta de exportación en la pestaña Salidas: acá vas a ver tus totales, rachas y récords."
+            icon={words.icon}
+            title={sport === 'run' ? 'Todavía no hay carreras' : 'Todavía no hay salidas'}
+            text={
+              sport === 'run'
+                ? 'Grabá tus carreras con OpenTracks (tipo de actividad: correr) y elegí su carpeta en la pestaña Salidas: acá vas a ver tus totales, rachas y récords de correr.'
+                : 'Grabá con OpenTracks y elegí su carpeta de exportación en la pestaña Salidas: acá vas a ver tus totales, rachas y récords.'
+            }
           >
             <Button title="Ir a Salidas" icon="folder_open" onPress={() => router.navigate('/salidas')} />
           </EmptyState>
@@ -387,7 +409,7 @@ export function StatsScreen() {
   const profileIncomplete = a.weightKg === null || (a.hrMax === null && a.birthYear === null);
 
   return (
-    <Screen title="Resumen">
+    <Screen title="Resumen" right={switcher}>
       <PowerSaverNotice />
       {profileIncomplete ? (
         <Card>
@@ -419,7 +441,7 @@ export function StatsScreen() {
         </Card>
       ) : null}
       <Card>
-        <Text style={s.label}>Cantidad de salidas</Text>
+        <Text style={s.label}>Cantidad de {words.activities}</Text>
         <Grid min={64}>
           <Metric label="Hoy" value={String(counts.day)} size="sm" />
           <Metric label="Esta semana" value={String(counts.week)} size="sm" />
@@ -450,12 +472,12 @@ export function StatsScreen() {
           delta={formatChange(tt.distance, prev.distance)}
         />
         <Grid min={96}>
-          <Metric label="Salidas" icon="directions_bike" tone="distance" value={String(tt.rides)} delta={formatChange(tt.rides, prev.rides)} />
+          <Metric label={sport === 'run' ? 'Carreras' : 'Salidas'} icon={words.icon} tone="distance" value={String(tt.rides)} delta={formatChange(tt.rides, prev.rides)} />
           <Metric label={autoPause ? 'En movimiento' : 'Tiempo'} icon="schedule" tone="time" value={formatHours(time)} delta={formatChange(time, prevTime)} />
           <Metric label="Desnivel +" icon="trending_up" tone="elevation" value={formatMeters(tt.elevationGain)} unit="m" delta={formatChange(tt.elevationGain, prev.elevationGain)} />
         </Grid>
         <Text style={s.muted}>
-          Las flechas comparan con {PREVIOUS[kind]} ({periodLabel(prevRange)}): {plural(prev.rides, 'salida', 'salidas')},{' '}
+          Las flechas comparan con {PREVIOUS[kind]} ({periodLabel(prevRange)}): {plural(prev.rides, words.activity, words.activities)},{' '}
           {formatKm(prev.distance)} km.
         </Text>
       </Card>
@@ -480,13 +502,18 @@ export function StatsScreen() {
         <Card>
           <Text style={s.h3}>Detalle del período</Text>
           <Grid min={140}>
-            <Metric label={autoPause ? 'Vel. media en movimiento' : 'Vel. media total'} icon="speed" tone="speed" value={formatKmh(time > 0 ? tt.distance / time : 0)} unit="km/h" />
-            <Metric label="Vel. máxima" icon="speed" tone="speed" value={formatKmh(tt.maxSpeed)} unit="km/h" />
+            <Metric
+              label={sport === 'run' ? (autoPause ? 'Ritmo en movimiento' : 'Ritmo total') : autoPause ? 'Vel. media en movimiento' : 'Vel. media total'}
+              icon="speed"
+              tone="speed"
+              {...sp(time > 0 ? tt.distance / time : 0)}
+            />
+            {sport === 'run' ? null : <Metric label="Vel. máxima" icon="speed" tone="speed" value={formatKmh(tt.maxSpeed)} unit="km/h" />}
             <Metric label="Altitud máxima" icon="landscape" tone="elevation" value={formatMeters(tt.maxAltitude)} unit="m" />
-            <Metric label="Mayor desnivel en una salida" icon="trending_up" tone="elevation" value={formatMeters(tt.maxRideGain)} unit="m" />
-            <Metric label="Salida más larga" icon="straighten" tone="distance" value={formatKm(tt.longestDistance)} unit="km" />
+            <Metric label={`Mayor desnivel en una ${words.activity}`} icon="trending_up" tone="elevation" value={formatMeters(tt.maxRideGain)} unit="m" />
+            <Metric label={sport === 'run' ? 'Carrera más larga' : 'Salida más larga'} icon="straighten" tone="distance" value={formatKm(tt.longestDistance)} unit="km" />
             <Metric label={autoPause ? 'Tiempo transcurrido' : 'En movimiento'} icon="timer" tone="time" value={formatHours(autoPause ? tt.elapsedSec : tt.movingSec)} />
-            {kind !== 'day' ? <Metric label="Días con salida" icon="calendar_month" tone="time" value={String(tt.activeDays)} /> : null}
+            {kind !== 'day' ? <Metric label={`Días con ${words.activity}`} icon="calendar_month" tone="time" value={String(tt.activeDays)} /> : null}
             <Metric label="Desnivel por km" icon="terrain" tone="elevation" value={tt.distance > 0 ? formatNumber((tt.elevationGain / tt.distance) * 1000, 1) : '--'} unit="m/km" />
             {tt.avgHr !== null ? <Metric label="FC media" icon="favorite" tone="hr" value={String(Math.round(tt.avgHr))} unit="lpm" /> : null}
             {tt.maxHr !== null ? <Metric label="FC máxima" icon="favorite" tone="hr" value={String(Math.round(tt.maxHr))} unit="lpm" /> : null}
@@ -494,7 +521,7 @@ export function StatsScreen() {
         </Card>
       ) : (
         <Card>
-          <EmptyState icon="event_busy" title="Sin salidas en este período" text="Usá las flechas para ver otros períodos." />
+          <EmptyState icon="event_busy" title={`Sin ${words.activities} en este período`} text="Usá las flechas para ver otros períodos." />
         </Card>
       )}
 
@@ -503,7 +530,7 @@ export function StatsScreen() {
 
       {inRange.length > 0 ? (
         <>
-          <SectionTitle title={`Salidas del período (${inRange.length})`} />
+          <SectionTitle title={`${sport === 'run' ? 'Carreras' : 'Salidas'} del período (${inRange.length})`} />
           {inRange.map((r) => (
             <RideRow key={r.id} ride={r} now={now} autoPause={autoPause} />
           ))}

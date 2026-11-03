@@ -1,5 +1,6 @@
 import type { BikeType } from '../core/analysis/profileMetrics';
 import type { Bike, BikePart } from '../core/bikes/bikes';
+import type { SportOverride } from '../core/stats/sport';
 import { conn } from './db';
 
 /** Bicis, componentes y la asignación de bici y "cuenta como salida" de cada salida. */
@@ -87,8 +88,8 @@ export async function setRideBike(rideId: string, bikeId: string | null): Promis
   await conn().runAsync('UPDATE rides SET bike_id = ? WHERE id = ?', [bikeId, rideId]);
 }
 
-/** Fuerza que una salida cuente (1) o no cuente (0) como salida en bici; null deja decidir al tipo. */
-export async function setCountedOverride(rideId: string, value: 0 | 1 | null): Promise<void> {
+/** Fuerza el deporte de una salida (1 bici, 2 correr, 0 no cuenta); null deja decidir al tipo. */
+export async function setCountedOverride(rideId: string, value: SportOverride | null): Promise<void> {
   await conn().runAsync('UPDATE rides SET counted_override = ? WHERE id = ?', [value, rideId]);
 }
 

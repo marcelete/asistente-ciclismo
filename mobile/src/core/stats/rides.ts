@@ -1,6 +1,7 @@
 import type { ElevationStats } from '../elevation/profile';
 import type { HrHistogram } from '../load/hrStats';
 import type { LiveSnapshot } from '../types';
+import { sportOf } from './sport';
 
 /** Lo que se guarda de cada salida en el historial: el resumen, sin las muestras. */
 export interface RideRecord {
@@ -40,10 +41,15 @@ export interface RideRecord {
   efforts: Record<number, number> | null;
   /** Versión del análisis con que se calculó; las más viejas se recalculan releyendo el GPX. */
   analysis: number;
+  /**
+   * Cadencia media en movimiento (pedaleos o pasos por minuto), si el GPX la trae. Opcional para
+   * que las salidas guardadas antes del pedido 15 sigan valiendo.
+   */
+  avgCadence?: number | null;
   /** Bici de la salida (null: la que esté por defecto). */
   bikeId?: string | null;
-  /** Null: lo decide el tipo de actividad; 1: contar como salida en bici; 0: no contar. */
-  countedOverride?: 0 | 1 | null;
+  /** Null: lo decide el tipo de actividad; 1: cuenta como bici; 2: como carrera; 0: no cuenta (ver `sportOf`). */
+  countedOverride?: 0 | 1 | 2 | null;
 }
 
 /** Datos de la salida que no salen del acumulador en vivo. */
@@ -53,6 +59,7 @@ export interface RideExtras {
   hrHist: HrHistogram | null;
   efforts: Record<number, number> | null;
   analysis: number;
+  avgCadence: number | null;
 }
 
 export function rideFromSummary(
@@ -81,6 +88,7 @@ export function rideFromSummary(
     hrHist: extras.hrHist ?? null,
     efforts: extras.efforts ?? null,
     analysis: extras.analysis ?? 0,
+    avgCadence: extras.avgCadence ?? null,
   };
 }
 
@@ -127,15 +135,16 @@ export function customName(name: string | null): string | null {
   return AUTOMATIC_NAME.test(name.trim()) ? null : name.trim();
 }
 
-/** Nombre para mostrar: el tuyo, o uno según la hora de inicio ("Salida de la tarde"). */
-export function rideTitle(r: Pick<RideRecord, 'name' | 'startT'>): string {
+/** Nombre para mostrar: el tuyo, o uno según la hora de inicio ("Salida de la tarde", "Carrera matutina"). */
+export function rideTitle(r: Pick<RideRecord, 'name' | 'startT'> & Partial<Pick<RideRecord, 'activityType' | 'countedOverride'>>): string {
   const own = customName(r.name);
   if (own) return own;
+  const what = sportOf({ activityType: r.activityType ?? null, countedOverride: r.countedOverride ?? null }) === 'run' ? 'Carrera' : 'Salida';
   const h = new Date(r.startT).getHours();
-  if (h >= 5 && h < 12) return 'Salida matutina';
-  if (h >= 12 && h < 14) return 'Salida del mediodía';
-  if (h >= 14 && h < 20) return 'Salida de la tarde';
-  return 'Salida nocturna';
+  if (h >= 5 && h < 12) return `${what} matutina`;
+  if (h >= 12 && h < 14) return `${what} del mediodía`;
+  if (h >= 14 && h < 20) return `${what} de la tarde`;
+  return `${what} nocturna`;
 }
 
 /** Tipo de actividad para mostrar, o null si el grabador no lo sabe. */

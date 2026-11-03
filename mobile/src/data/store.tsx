@@ -8,7 +8,8 @@ import type { Bike, BikePart } from '../core/bikes/bikes';
 import { demAltitudes, elevationStats } from '../core/elevation/profile';
 import { newlyCompleted } from '../core/goals/goals';
 import type { Goal } from '../core/goals/goals';
-import { countsAsRide } from '../core/stats/sport';
+import { countsAsRide, isSport, overrideFor } from '../core/stats/sport';
+import type { TrainSport } from '../core/stats/sport';
 import type { RideRecord } from '../core/stats/rides';
 import { importSources, needsReanalysis, reanalyzeRides } from '../import/sync';
 import type { GpxSource } from '../import/sync';
@@ -57,8 +58,13 @@ export interface RideChange {
 }
 
 interface Store {
-  /** Solo las salidas que cuentan como salidas en bici: con esto se calculan totales, rachas, metas y récords. */
+  /**
+   * Las salidas del deporte elegido (`settings.sport`, bici o correr): con esto se calculan
+   * totales, rachas, metas, récords y logros, cada deporte por su lado (pedido 15).
+   */
   rides: RideRecord[];
+  /** Las que cuentan, de los dos deportes: la base de la carga (CTL, ATL y forma) y del entrenador. */
+  trainingRides: RideRecord[];
   /** Todas las salidas importadas, también las que no cuentan (caminatas, por ejemplo). */
   allRides: RideRecord[];
   bikes: Bike[];
@@ -70,8 +76,8 @@ interface Store {
   removePart: (id: string) => Promise<void>;
   /** Cambia la bici de una salida (null: la que esté por defecto). */
   setRideBike: (rideId: string, bikeId: string | null) => Promise<void>;
-  /** Fuerza que la salida cuente (true) o no cuente (false) como salida en bici; null deja decidir al tipo. */
-  setRideCounted: (rideId: string, value: boolean | null) => Promise<void>;
+  /** Fuerza el deporte de la salida ('none': no cuenta); null deja decidir al tipo de actividad. */
+  setRideSport: (rideId: string, sport: TrainSport | 'none' | null) => Promise<void>;
   goals: Goal[];
   settings: Settings;
   /** Lee la carpeta de OpenTracks y guarda las salidas nuevas. Devuelve un texto de estado. */
@@ -145,9 +151,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [allRides, setAllRides] = useState<RideRecord[]>(() => loadRides());
   const [bikes, setBikes] = useState<Bike[]>(() => loadBikes());
   const [bikeParts, setBikeParts] = useState<BikePart[]>(() => loadParts());
-  const rides = useMemo(() => allRides.filter(countsAsRide), [allRides]);
-  const [goals, setGoals] = useState<Goal[]>(() => loadGoals());
   const [settings, setSettings] = useState<Settings>(() => sanitizeSettings(loadSetting<unknown>('settings', {})));
+  const trainingRides = useMemo(() => allRides.filter(countsAsRide), [allRides]);
+  const rides = useMemo(() => allRides.filter(isSport(settings.sport)), [allRides, settings.sport]);
+  const [goals, setGoals] = useState<Goal[]>(() => loadGoals());
   const [pendingDem, setPendingDem] = useState(() => profilesPendingDem().length);
   const [syncing, setSyncing] = useState(false);
   const [progress, setProgress] = useState<Store['progress']>(null);
@@ -182,10 +189,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Los recordatorios dependen del historial, las metas y su configuración; nada más.
   const { reminders, autoPause } = settings;
   useEffect(() => {
-    rescheduleReminders(rides, goals, reminders, autoPause).catch(
+    // Con los dos deportes: cada meta mira las de su deporte y la racha cuenta cualquier salida.
+    rescheduleReminders(trainingRides, goals, reminders, autoPause).catch(
       logError('notif', 'No se pudieron programar los recordatorios'),
     );
-  }, [rides, goals, reminders, autoPause]);
+  }, [trainingRides, goals, reminders, autoPause]);
 
   const updateSettings = useCallback(async (patch: Partial<Settings>) => {
     const next = { ...latest.current.settings, ...patch };
@@ -333,12 +341,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const bikesNow = loadBikes();
         const partsNow = loadParts();
         if (partsNow.some((p) => p.alertKm !== null)) {
+          const bikeRides = after.filter(isSport('bike'));
           const wasDue = new Set(
-            partStatus(partsNow, totalsByBike(after.filter((r) => !addedIds.has(r.id)), bikesNow))
+            partStatus(partsNow, totalsByBike(bikeRides.filter((r) => !addedIds.has(r.id)), bikesNow))
               .filter((x) => x.due)
               .map((x) => x.part.id),
           );
-          const newlyDue = partStatus(partsNow, totalsByBike(after, bikesNow)).filter((x) => x.due && !wasDue.has(x.part.id));
+          const newlyDue = partStatus(partsNow, totalsByBike(bikeRides, bikesNow)).filter((x) => x.due && !wasDue.has(x.part.id));
           await notifyPartsDue(
             newlyDue.map((x) => ({ name: x.part.name, bike: bikesNow.find((b) => b.id === x.part.bikeId)?.name ?? '', km: x.km })),
           ).catch(logError('notif', 'No se pudo avisar el componente'));
@@ -384,12 +393,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const { weatherOnline, city } = settings;
   useEffect(() => {
     if (!startupDone || !weatherOnline || !city) return;
-    runExclusive('weather', () => refreshWeather(latest.current.rides, city, () => !latest.current.settings.weatherOnline))
+    runExclusive('weather', () => refreshWeather(latest.current.allRides.filter(countsAsRide), city, () => !latest.current.settings.weatherOnline))
       .then((res) => {
         if (res && res.fetched > 0) setChange((c) => ({ seq: c.seq + 1, rideIds: [] }));
       })
       .catch(logError('weather', 'Falló la consulta de clima'));
-  }, [startupDone, weatherOnline, city, rides, runExclusive]);
+  }, [startupDone, weatherOnline, city, trainingRides, runExclusive]);
 
   // Al abrir la app, y cada vez que volvés a ella, se revisa la carpeta ya elegida sin preguntar y
   // se reintentan las consultas de altitud que hayan quedado pendientes.
@@ -409,8 +418,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const addGoal = useCallback(async (g: Omit<Goal, 'id'>) => {
     // Una sola meta por período y métrica: si ya existe, se le cambia el objetivo.
-    const same = latest.current.goals.find((x) => x.period === g.period && x.metric === g.metric);
-    const goal: Goal = { ...g, id: same?.id ?? `${Date.now()}` };
+    const sport = g.sport ?? 'bike';
+    const same = latest.current.goals.find((x) => x.period === g.period && x.metric === g.metric && (x.sport ?? 'bike') === sport);
+    const goal: Goal = { ...g, sport, id: same?.id ?? `${Date.now()}` };
     await saveGoal(goal);
     setGoals(loadGoals());
   }, []);
@@ -461,9 +471,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     [reloadRides],
   );
-  const setRideCounted = useCallback(
-    async (rideId: string, value: boolean | null) => {
-      await setCountedOverride(rideId, value === null ? null : value ? 1 : 0);
+  const setRideSport = useCallback(
+    async (rideId: string, sport: TrainSport | 'none' | null) => {
+      await setCountedOverride(rideId, sport === null ? null : overrideFor(sport));
       reloadRides([rideId]);
     },
     [reloadRides],
@@ -531,11 +541,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const reloadAll = useCallback((changedRideIds: string[] = []) => {
     const all = loadRides();
+    const loadedSettings = sanitizeSettings(loadSetting<unknown>('settings', {}));
     const next = {
-      rides: all.filter(countsAsRide),
+      rides: all.filter(isSport(loadedSettings.sport)),
       allRides: all,
       goals: loadGoals(),
-      settings: sanitizeSettings(loadSetting<unknown>('settings', {})),
+      settings: loadedSettings,
     };
     latest.current = next;
     setAllRides(all);
@@ -550,6 +561,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       rides,
+      trainingRides,
       allRides,
       bikes,
       bikeParts,
@@ -558,7 +570,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       savePart: savePartAction,
       removePart,
       setRideBike: setRideBikeAction,
-      setRideCounted,
+      setRideSport,
       goals,
       settings,
       syncFolder,
@@ -579,6 +591,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }),
     [
       rides,
+      trainingRides,
       allRides,
       bikes,
       bikeParts,
@@ -587,7 +600,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       savePartAction,
       removePart,
       setRideBikeAction,
-      setRideCounted,
+      setRideSport,
       goals,
       settings,
       syncFolder,

@@ -2,6 +2,8 @@ import { sanitizeEfforts } from '../efforts/distanceEfforts';
 import type { Goal, GoalMetric, GoalPeriod } from '../goals/goals';
 import { sanitizeHistogram } from '../load/hrStats';
 import type { RideRecord } from '../stats/rides';
+import { sanitizeOverride, sanitizeSport } from '../stats/sport';
+import type { SportOverride } from '../stats/sport';
 import { sanitizeSettings } from '../../data/settings';
 import type { Settings } from '../../data/settings';
 import { unpackProfile } from '../../data/profileCodec';
@@ -17,8 +19,8 @@ export const BACKUP_MAX_BYTES = 200 * 1024 * 1024;
 
 export interface BackupRide extends RideRecord {
   bikeId: string | null;
-  /** Null = lo decide el tipo de actividad; 1 = contar como bici; 0 = no contar. */
-  countedOverride: 0 | 1 | null;
+  /** Null = lo decide el tipo de actividad; 1 = bici; 2 = correr (desde el pedido 15); 0 = no cuenta. */
+  countedOverride: SportOverride | null;
 }
 
 /** Perfil de altitud: el texto JSON tal cual está en la base (arreglos empaquetados). */
@@ -71,6 +73,38 @@ export interface BackupAwardSeen {
   t: number;
 }
 
+/** Programa de entrenamiento activo y programas terminados. */
+export interface BackupPrograms {
+  active: { id: string; startT: number } | null;
+  completed: { id: string; t: number }[];
+}
+
+export interface BackupCoachSession {
+  date: string;
+  workoutId: string;
+  status: 'done' | 'skipped';
+  rideId: string | null;
+  rpe: number | null;
+  minutes: number | null;
+  note: string | null;
+  doneT: number | null;
+}
+
+export interface BackupWellness {
+  date: string;
+  sleep: number;
+  mood: number;
+  fatigue: number;
+}
+
+/** Entrenador: el plan, las sesiones hechas y cómo te sentías. */
+export interface BackupCoach {
+  /** Macrociclo ya serializado (se valida con el mismo lector que usa la app al restaurar). */
+  macro: string | null;
+  sessions: BackupCoachSession[];
+  wellness: BackupWellness[];
+}
+
 export interface BackupData {
   rides: BackupRide[];
   profiles: BackupProfile[];
@@ -82,6 +116,8 @@ export interface BackupData {
   weather: BackupWeather[];
   awardsSeen: BackupAwardSeen[];
   awardsInit: boolean;
+  programs: BackupPrograms;
+  coach: BackupCoach;
 }
 
 /** Arma el JSON del respaldo. Los ajustes van sin las URIs de las carpetas elegidas. */
@@ -112,6 +148,8 @@ export function buildBackup(data: BackupData, appVersion: string, now: number): 
     weather: data.weather,
     awardsSeen: data.awardsSeen,
     awardsInit: data.awardsInit,
+    programs: data.programs,
+    coach: data.coach,
   });
 }
 
@@ -154,8 +192,9 @@ function sanitizeRide(raw: unknown): BackupRide | null {
     hrHist: sanitizeHistogram(r.hrHist),
     efforts: sanitizeEfforts(r.efforts),
     analysis: isNum(r.analysis) ? r.analysis : 0,
+    avgCadence: isNum(r.avgCadence) && r.avgCadence > 0 && r.avgCadence < 260 ? r.avgCadence : null,
     bikeId: strOrNull(r.bikeId, 120) || null,
-    countedOverride: r.countedOverride === 0 || r.countedOverride === 1 ? r.countedOverride : null,
+    countedOverride: sanitizeOverride(r.countedOverride),
   };
 }
 
@@ -175,7 +214,8 @@ function sanitizeGoal(raw: unknown): Goal | null {
   const id = g && str(g.id, 60);
   if (!g || !id || !PERIODS.includes(g.period as GoalPeriod) || !METRICS.includes(g.metric as GoalMetric)) return null;
   if (!isNum(g.target) || g.target <= 0) return null;
-  return { id, period: g.period as GoalPeriod, metric: g.metric as GoalMetric, target: g.target };
+  // Los respaldos de antes del pedido 15 no tienen deporte: eran todas de bici.
+  return { id, period: g.period as GoalPeriod, metric: g.metric as GoalMetric, target: g.target, sport: sanitizeSport(g.sport) };
 }
 
 function sanitizeBike(raw: unknown): BackupBike | null {
@@ -229,6 +269,44 @@ function sanitizeSeen(raw: unknown): BackupAwardSeen | null {
   return a && key && isNum(a.t) ? { key, t: a.t } : null;
 }
 
+function sanitizePrograms(raw: unknown): BackupPrograms {
+  const p = obj(raw);
+  const a = p && obj(p.active);
+  const active = a && str(a.id, 60) && isNum(a.startT) ? { id: a.id as string, startT: a.startT } : null;
+  const completed = list(p?.completed, (x) => {
+    const c = obj(x);
+    const id = c && str(c.id, 60);
+    return c && id && isNum(c.t) ? { id, t: c.t } : null;
+  }).items;
+  return { active, completed };
+}
+
+const dateStr = (v: unknown): string | null => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+function sanitizeCoachSession(raw: unknown): BackupCoachSession | null {
+  const s = obj(raw);
+  const date = s && dateStr(s.date);
+  const workoutId = s && str(s.workoutId, 60);
+  if (!s || !date || !workoutId) return null;
+  return {
+    date,
+    workoutId,
+    status: s.status === 'skipped' ? 'skipped' : 'done',
+    rideId: strOrNull(s.rideId, 120) || null,
+    rpe: numOrNull(s.rpe),
+    minutes: numOrNull(s.minutes),
+    note: strOrNull(s.note, 500) || null,
+    doneT: numOrNull(s.doneT),
+  };
+}
+
+function sanitizeWellness(raw: unknown): BackupWellness | null {
+  const w = obj(raw);
+  const date = w && dateStr(w.date);
+  const ok = (v: unknown): v is number => isNum(v) && v >= 1 && v <= 5;
+  return w && date && ok(w.sleep) && ok(w.mood) && ok(w.fatigue) ? { date, sleep: w.sleep, mood: w.mood, fatigue: w.fatigue } : null;
+}
+
 function list<T>(raw: unknown, f: (x: unknown) => T | null): { items: T[]; skipped: number } {
   if (!Array.isArray(raw)) return { items: [], skipped: 0 };
   const items: T[] = [];
@@ -237,6 +315,23 @@ function list<T>(raw: unknown, f: (x: unknown) => T | null): { items: T[]; skipp
     if (v) items.push(v);
   }
   return { items, skipped: raw.length - items.length };
+}
+
+function sanitizeCoachBackup(raw: unknown): { coach: BackupCoach; skipped: number } {
+  const c = obj(raw);
+  const sessions = list(c?.sessions, sanitizeCoachSession);
+  const wellness = list(c?.wellness, sanitizeWellness);
+  // El plan se guarda como texto; solo se acepta si es un JSON razonable y no enorme.
+  let macro: string | null = null;
+  if (c && typeof c.macro === 'string' && c.macro.length <= 200_000) {
+    try {
+      const m = obj(JSON.parse(c.macro));
+      if (m && isNum(m.startT) && isNum(m.totalWeeks) && Array.isArray(m.mesocycles)) macro = c.macro;
+    } catch {
+      macro = null;
+    }
+  }
+  return { coach: { macro, sessions: sessions.items, wellness: wellness.items }, skipped: sessions.skipped + wellness.skipped };
 }
 
 export type ParsedBackup =
@@ -267,6 +362,7 @@ export function parseBackup(text: string): ParsedBackup {
   const segments = list(b.segments, sanitizeSegment);
   const weather = list(b.weather, sanitizeWeather);
   const seen = list(b.awardsSeen, sanitizeSeen);
+  const coach = sanitizeCoachBackup(b.coach);
   const settings = sanitizeSettings(b.settings);
   return {
     ok: true,
@@ -281,9 +377,11 @@ export function parseBackup(text: string): ParsedBackup {
       weather: weather.items,
       awardsSeen: seen.items,
       awardsInit: b.awardsInit === true,
+      programs: sanitizePrograms(b.programs),
+      coach: coach.coach,
     },
     skipped:
-      rides.skipped + profiles.skipped + goals.skipped + bikes.skipped + parts.skipped + segments.skipped + weather.skipped + seen.skipped,
+      rides.skipped + profiles.skipped + goals.skipped + bikes.skipped + parts.skipped + segments.skipped + weather.skipped + seen.skipped + coach.skipped,
     appVersion: typeof b.appVersion === 'string' ? b.appVersion.slice(0, 20) : '',
     createdAt: typeof b.createdAt === 'string' ? b.createdAt.slice(0, 40) : '',
   };
@@ -325,6 +423,8 @@ export interface RestorePlan {
   segments: BackupSegment[];
   weather: BackupWeather[];
   awardsSeen: BackupAwardSeen[];
+  programs: BackupPrograms;
+  coach: BackupCoach;
   /** Cuántos elementos del respaldo ya estaban y no se tocan. */
   alreadyHere: number;
 }
@@ -339,7 +439,7 @@ export function planRestore(local: LocalIndex, data: BackupData): RestorePlan {
   const goals: Goal[] = [];
   const goalConflicts: GoalConflict[] = [];
   for (const g of data.goals) {
-    const same = local.goals.find((x) => x.id === g.id || (x.period === g.period && x.metric === g.metric));
+    const same = local.goals.find((x) => x.id === g.id || (x.period === g.period && x.metric === g.metric && (x.sport ?? 'bike') === (g.sport ?? 'bike')));
     if (!same) goals.push(g);
     else if (same.target !== g.target) goalConflicts.push({ period: g.period, metric: g.metric, local: same.target, backup: g.target });
   }
@@ -364,6 +464,8 @@ export function planRestore(local: LocalIndex, data: BackupData): RestorePlan {
     segments,
     weather,
     awardsSeen,
+    programs: data.programs,
+    coach: data.coach,
     alreadyHere: total - added,
   };
 }

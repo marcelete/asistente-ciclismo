@@ -12,7 +12,10 @@ import { loadEfforts, loadSegments } from '../../data/dbSegments';
 import { unpackProfile } from '../../data/profileCodec';
 import { useStore } from '../../data/store';
 import { Card, EmptyState, Metric, Grid, SectionTitle, useStyles } from '../components';
-import { formatDuration, formatKmh, formatNumber } from '../format';
+import { formatDuration, formatKmh, formatNumber, formatPace } from '../format';
+import { useRunThreshold } from '../coachHooks';
+import { riegelTime } from '../../core/coach/runLevel';
+import { RUN_EFFORT_DISTANCES_M } from '../../core/efforts/distanceEfforts';
 import { useNow } from '../hooks';
 
 const DAY_MS = 86_400_000;
@@ -28,6 +31,81 @@ interface Data {
 
 /** Metas → Predicciones: tu potencia estimada, tiempos para 40 y 100 km y qué hace falta para bajar un récord. */
 export function PredictionsPanel() {
+  const { settings } = useStore();
+  return settings.sport === 'run' ? <RunPredictionsPanel /> : <BikePredictionsPanel />;
+}
+
+const RUN_TARGETS: [number, string][] = [
+  [5000, '5 km'],
+  [10000, '10 km'],
+  [21097, 'Media maratón'],
+  [42195, 'Maratón'],
+];
+
+/** Correr: tiempos probables con tus mejores marcas (t = a·d^b) y el ritmo de umbral. */
+function RunPredictionsPanel() {
+  const { rides } = useStore();
+  const s = useStyles();
+  const now = useNow(3_600_000);
+  const th = useRunThreshold();
+  const own = new Set<number>(RUN_EFFORT_DISTANCES_M);
+  const only = (e: Record<number, number> | null) => (e ? Object.fromEntries(Object.entries(e).filter(([d]) => own.has(Number(d)) && Number(d) >= 1000)) : null);
+  const recent = rides.filter((r) => now - r.startT <= 90 * DAY_MS);
+  const fitNow = fitDistance(bestEfforts(recent.map((r) => only(r.efforts))));
+  const fitAll = fitDistance(bestEfforts(rides.map((r) => only(r.efforts))));
+
+  if (rides.length === 0 && !th) {
+    return <EmptyState icon="query_stats" title="Todavía no hay datos" text="Con tus carreras (o una marca cargada en Plan) vas a ver acá tus tiempos probables." />;
+  }
+  const row = (label: string, p: DistancePrediction | null) =>
+    p ? (
+      <Text key={label} style={s.body}>
+        {label}: {formatDuration(p.seconds)} ({formatPace(p.distance / p.seconds)} /km){p.extrapolated ? ' · extrapolado' : ''}
+      </Text>
+    ) : null;
+  const fromThreshold = th
+    ? RUN_TARGETS.map(([d]) => ({ distance: d, seconds: riegelTime(th.kmh, 3600, d / 1000), extrapolated: false }))
+    : [];
+
+  return (
+    <>
+      <SectionTitle title="Ritmo de umbral" />
+      <Card>
+        {th ? (
+          <Text style={s.body}>
+            {formatPace(th.kmh / 3.6)} por km, según {th.detail}.
+          </Text>
+        ) : (
+          <Text style={s.muted}>Todavía no hay una marca, un test de 30 minutos ni carreras de 1 km o más en los últimos 90 días.</Text>
+        )}
+      </Card>
+
+      <SectionTitle title="Tiempos probables" />
+      <Card>
+        {th ? (
+          <>
+            <Text style={s.h3}>Con tu ritmo de umbral</Text>
+            {fromThreshold.map((p, i) => row(RUN_TARGETS[i][1], p))}
+          </>
+        ) : null}
+        <Text style={s.h3}>Con tus carreras de los últimos 90 días</Text>
+        {fitNow ? RUN_TARGETS.map(([d, label]) => row(label, predictTime(fitNow, d))) : <Text style={s.muted}>Hacen falta mejores tiempos de al menos dos distancias.</Text>}
+        {/* El mejor momento solo se muestra si da otra cosa (con todas las carreras recientes es lo mismo). */}
+        {fitAll && (!fitNow || Math.abs(predictTime(fitAll, 10000).seconds - predictTime(fitNow, 10000).seconds) >= 1) ? (
+          <>
+            <Text style={s.h3}>Con tu mejor momento</Text>
+            {RUN_TARGETS.map(([d, label]) => row(label, predictTime(fitAll, d)))}
+          </>
+        ) : null}
+        <Text style={s.muted}>
+          Fórmula de Riegel con tu umbral (lo que sostenés una hora) y ajuste t = a·d^b a tus mejores tiempos. Para la media y la maratón hace falta haber hecho fondos largos: si no, es una extrapolación.
+        </Text>
+      </Card>
+    </>
+  );
+}
+
+function BikePredictionsPanel() {
   const { rides, bikes, settings } = useStore();
   const s = useStyles();
   const now = useNow(3_600_000);

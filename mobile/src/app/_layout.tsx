@@ -52,6 +52,7 @@ function Navigation() {
         <Stack.Screen name="segmento/[id]" options={{ title: 'Segmento' }} />
         <Stack.Screen name="bicis" options={{ title: 'Mis bicis' }} />
         <Stack.Screen name="exportar" options={{ title: 'Exportar e importar' }} />
+        <Stack.Screen name="entrenar" options={{ title: 'Entrenador', gestureEnabled: false }} />
       </Stack>
       <StatusBar style={t.dark ? 'light' : 'dark'} />
     </NavigationTheme>

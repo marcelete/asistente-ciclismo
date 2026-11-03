@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { badgeKey, FAMILIES, TIER_LABEL, tierOf } from '../../core/awards/catalog';
+import { badgeKey, familiesFor, TIER_LABEL, tierOf } from '../../core/awards/catalog';
+import { effortLabel } from '../../core/efforts/distanceEfforts';
+import { useStore } from '../../data/store';
+import { SportSwitch } from '../SportSwitch';
 import type { AwardEvent, NextAward } from '../../core/awards/engine';
 import { monthName } from '../../core/stats/periods';
 import { useAwards } from '../../data/awards';
@@ -24,7 +27,7 @@ const monthTitle = (key: string) => {
   return `${name[0].toUpperCase()}${name.slice(1)} de ${y}`;
 };
 
-const EFFORT_TITLE = (d: number) => `${d / 1000} km`;
+const EFFORT_TITLE = (d: number) => effortLabel(d);
 const fmtTime = (sec: number) => {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
@@ -35,6 +38,8 @@ const fmtTime = (sec: number) => {
 /** Pestaña Logros: la vitrina de premios, lo que sigue, las victorias por mes y los mejores tiempos. */
 export function AwardsScreen() {
   const { result } = useAwards();
+  const { sport } = useStore().settings;
+  const families = useMemo(() => familiesFor(sport), [sport]);
   const s = useStyles();
   const l = useLocal();
   const [selected, setSelected] = useState<string | null>(null);
@@ -57,21 +62,21 @@ export function AwardsScreen() {
 
   if (result.events.length === 0 && result.next.length === 0) {
     return (
-      <Screen title="Logros">
+      <Screen title="Logros" right={<SportSwitch />}>
         <EmptyState icon="emoji_events" title="Todavía no hay logros" text="Cuando importes tus salidas en bici, tus premios y victorias van a aparecer acá." />
       </Screen>
     );
   }
 
   return (
-    <Screen title="Logros" subtitle={`Trofeos: ${result.badges.length} · Victorias: ${result.victories.length}`}>
+    <Screen title="Logros" right={<SportSwitch />} subtitle={`Trofeos: ${result.badges.length} · Victorias: ${result.victories.length}`}>
       {result.next.length > 0 ? (
         <>
           <SectionTitle title="Próximos premios" />
           <Card>
             {result.next.map((n) => (
               <View key={n.key} style={l.nextRow}>
-                <Medal tier={tierOf(FAMILIES.find((f) => f.id === n.family)!, n.target)} size={44} locked progress={n.fraction} />
+                <Medal tier={tierOf(families.find((f) => f.id === n.family)!, n.target)} size={44} locked progress={n.fraction} />
                 <View style={s.flex}>
                   <Text style={s.body}>{n.title}</Text>
                   <ProgressBar fraction={n.fraction} />
@@ -84,12 +89,12 @@ export function AwardsScreen() {
       ) : null}
 
       <SectionTitle title="Vitrina" />
-      {FAMILIES.map((fam) => (
+      {families.map((fam) => (
         <Card key={fam.id}>
           <Text style={s.h3}>{fam.label}</Text>
           <View style={l.medals}>
             {fam.thresholds.map((th) => {
-              const key = badgeKey(fam.id, th);
+              const key = badgeKey(fam.id, th, sport);
               const got = earned.get(key);
               const tier = tierOf(fam, th);
               const nxt = nextByKey.get(key);
@@ -106,7 +111,7 @@ export function AwardsScreen() {
               );
             })}
           </View>
-          {sel && fam.thresholds.some((th) => badgeKey(fam.id, th) === sel.key) ? (
+          {sel && fam.thresholds.some((th) => badgeKey(fam.id, th, sport) === sel.key) ? (
             <View style={l.detail}>
               <Text style={s.body}>{sel.title}</Text>
               <Text style={s.muted}>

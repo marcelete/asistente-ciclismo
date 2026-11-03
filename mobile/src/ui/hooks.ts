@@ -28,9 +28,9 @@ export function useNow(intervalMs = 60_000): number {
   return now;
 }
 
-/** FC más alta registrada en todo el historial (null sin sensor). */
+/** FC más alta registrada en todo el historial, en bici y corriendo (null sin sensor). */
 export function useObservedMaxHr(): number | null {
-  const { rides } = useStore();
+  const { trainingRides: rides } = useStore();
   return useMemo(() => rides.reduce<number | null>((m, r) => (r.maxHr !== null && (m === null || r.maxHr > m) ? r.maxHr : m), null), [rides]);
 }
 

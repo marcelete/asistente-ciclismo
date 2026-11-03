@@ -4,8 +4,10 @@ import { periodStart, shiftPeriodStart } from '../stats/periods';
 import { rideElevation } from '../stats/rides';
 import type { RideRecord } from '../stats/rides';
 import { streak } from '../stats/streaks';
-import { badgeKey, familyOf, FAMILIES, tierOf } from './catalog';
-import type { AwardMetric, Tier } from './catalog';
+import { BIKE_EFFORT_DISTANCES_M as BIKE_EFFORTS, effortLabel, RUN_EFFORT_DISTANCES_M as RUN_EFFORTS } from '../efforts/distanceEfforts';
+import type { TrainSport } from '../stats/sport';
+import { badgeKey, familiesFor, sportKeyPrefix, tierOf } from './catalog';
+import type { AwardMetric, BadgeFamily, Tier } from './catalog';
 
 /**
  * Motor de premios y victorias. Pura: recibe las salidas que cuentan y devuelve todo lo que
@@ -63,7 +65,10 @@ export interface SegmentEffortInput {
 }
 
 export interface AwardsInput {
+  /** Las salidas de un solo deporte. */
   rides: RideRecord[];
+  /** Deporte de las salidas: cambia umbrales, textos y el prefijo de las claves. Bici si falta. */
+  sport?: TrainSport;
   goals: Goal[];
   now: number;
   autoPause: boolean;
@@ -88,7 +93,11 @@ const dateKey = (t: number) => {
   const p = (x: number) => String(x).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
-const effortName = (d: number) => `${d / 1000} km`;
+const effortName = (d: number) => effortLabel(d);
+const fmtPace = (kmh: number) => {
+  const sec = Math.round(3600 / kmh);
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')} /km`;
+};
 
 interface RecordMetric {
   id: string;
@@ -99,7 +108,7 @@ interface RecordMetric {
   usesGain?: boolean;
 }
 
-const RECORD_METRICS: RecordMetric[] = [
+const BIKE_RECORD_METRICS: RecordMetric[] = [
   { id: 'distance', title: 'Récord de distancia', value: (r) => r.distance, format: fmtKm },
   {
     id: 'gain',
@@ -117,22 +126,43 @@ const RECORD_METRICS: RecordMetric[] = [
   },
 ];
 
+/** Correr: el récord de velocidad media es el de ritmo medio, desde los 5 km. */
+const RUN_RECORD_METRICS: RecordMetric[] = [
+  ...BIKE_RECORD_METRICS.filter((m) => m.id !== 'avg'),
+  {
+    id: 'avg',
+    title: 'Récord de ritmo medio (5 km o más)',
+    value: (r) => (r.distance >= 5_000 && r.movingSec > 0 ? (r.distance / r.movingSec) * 3.6 : null),
+    format: fmtPace,
+  },
+];
+
 /** Orden estable: por inicio y, si empatan, por id. */
 const byTime = (a: RideRecord, b: RideRecord) => a.startT - b.startT || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 export function computeAwards(input: AwardsInput): AwardsResult {
-  const { goals, now, autoPause } = input;
+  const { now, autoPause } = input;
+  const sport = input.sport ?? 'bike';
+  const run = sport === 'run';
+  const pre = sportKeyPrefix(sport);
+  // Cada meta cuenta en su deporte.
+  const goals = input.goals.filter((g) => (g.sport ?? 'bike') === sport);
+  const families = familiesFor(sport);
+  const famMap = new Map<AwardMetric, BadgeFamily>(families.map((f) => [f.id, f] as const));
+  const RECORD_METRICS = run ? RUN_RECORD_METRICS : BIKE_RECORD_METRICS;
   const effortsByRide = new Map<string, SegmentEffortInput[]>();
   for (const e of input.segmentEfforts ?? []) effortsByRide.set(e.rideId, [...(effortsByRide.get(e.rideId) ?? []), e]);
   const routeCount = new Map<string, number>();
   const rides = [...input.rides].sort(byTime);
   const events: AwardEvent[] = [];
   const earned = new Set<string>();
+  const effortSet = new Set<number>(run ? RUN_EFFORTS : BIKE_EFFORTS);
 
   const earn = (family: AwardMetric, value: number, r: RideRecord) => {
-    const fam = familyOf(family);
+    const fam = famMap.get(family);
+    if (!fam) return;
     for (const th of fam.thresholds) {
-      const key = badgeKey(family, th);
+      const key = badgeKey(family, th, sport);
       if (value >= th && !earned.has(key)) {
         earned.add(key);
         events.push({
@@ -151,8 +181,9 @@ export function computeAwards(input: AwardsInput): AwardsResult {
 
   /** Un umbral puntual (los horarios no son una escala: madrugador no incluye a nocturno). */
   const earnOne = (family: AwardMetric, th: number, r: RideRecord) => {
-    const fam = familyOf(family);
-    const key = badgeKey(family, th);
+    const fam = famMap.get(family);
+    if (!fam) return;
+    const key = badgeKey(family, th, sport);
     if (earned.has(key)) return;
     earned.add(key);
     events.push({ key, kind: 'badge', title: fam.title(th), tier: tierOf(fam, th), rideId: r.id, t: r.startT });
@@ -213,7 +244,7 @@ export function computeAwards(input: AwardsInput): AwardsResult {
     earn('rideKm', r.distance / 1000, r);
     earn('rideGain', elev.gain, r);
     earn('rideHours', r.movingSec / 3600, r);
-    if (r.distance >= 20_000 && r.movingSec > 0) earn('avgSpeed', (r.distance / r.movingSec) * 3.6, r);
+    if (r.distance >= (run ? 5_000 : 20_000) && r.movingSec > 0) earn('avgSpeed', (r.distance / r.movingSec) * 3.6, r);
 
     // Horarios.
     const hour = new Date(r.startT).getHours();
@@ -232,25 +263,29 @@ export function computeAwards(input: AwardsInput): AwardsResult {
     const month = periodStart('month', r.startT);
     monthKm.set(month, (monthKm.get(month) ?? 0) + r.distance / 1000);
     earn('monthKm', monthKm.get(month)!, r);
-    const bike = r.bikeId ?? 'default';
-    bikeKm.set(bike, (bikeKm.get(bike) ?? 0) + r.distance / 1000);
-    earn('bikeKm', bikeKm.get(bike)!, r);
+    if (!run) {
+      const bike = r.bikeId ?? 'default';
+      bikeKm.set(bike, (bikeKm.get(bike) ?? 0) + r.distance / 1000);
+      earn('bikeKm', bikeKm.get(bike)!, r);
+    }
 
     // Victorias: récords personales.
     for (const m of RECORD_METRICS) {
       const v = m.value(r);
       if (v === null || !Number.isFinite(v) || v <= 0) continue;
       const pos = place(m.id, v, r);
-      if (pos === 0) victory('record', `rec:${m.id}:${r.id}`, m.title, m.format(v), r, m.usesGain);
+      if (pos === 0) victory('record', `${pre}rec:${m.id}:${r.id}`, m.title, m.format(v), r, m.usesGain);
     }
     for (const [k, sec] of Object.entries(r.efforts ?? {})) {
       const d = Number(k);
       if (!Number.isFinite(sec) || sec <= 0) continue;
+      // Solo las distancias del deporte (se calculan todas en cada salida).
+      if (!effortSet.has(d)) continue;
       const pos = place(`eff${d}`, sec, r);
       const detail = fmtDur(sec);
-      if (pos === 0) victory('record', `rec:eff${d}:${r.id}`, `Mejor tiempo en ${effortName(d)}`, detail, r);
-      else if (pos === 1) victory('record2', `rec2:eff${d}:${r.id}`, `2.ª mejor marca en ${effortName(d)}`, detail, r);
-      else if (pos === 2) victory('record3', `rec3:eff${d}:${r.id}`, `3.ª mejor marca en ${effortName(d)}`, detail, r);
+      if (pos === 0) victory('record', `${pre}rec:eff${d}:${r.id}`, `Mejor tiempo en ${effortName(d)}`, detail, r);
+      else if (pos === 1) victory('record2', `${pre}rec2:eff${d}:${r.id}`, `2.ª mejor marca en ${effortName(d)}`, detail, r);
+      else if (pos === 2) victory('record3', `${pre}rec3:eff${d}:${r.id}`, `3.ª mejor marca en ${effortName(d)}`, detail, r);
     }
 
     // Segmentos personales: récord en cada uno (la mejor pasada de la salida).
@@ -262,7 +297,7 @@ export function computeAwards(input: AwardsInput): AwardsResult {
     for (const e of segBest.values()) {
       if (!Number.isFinite(e.duration) || e.duration <= 0) continue;
       if (place(`seg${e.segmentId}`, e.duration, r) === 0) {
-        victory('record', `rec:seg:${e.segmentId}:${r.id}`, `Récord en ${e.segmentName}`, fmtDur(e.duration), r);
+        victory('record', `${pre}rec:seg:${e.segmentId}:${r.id}`, `Récord en ${e.segmentName}`, fmtDur(e.duration), r);
       }
     }
 
@@ -294,7 +329,7 @@ export function computeAwards(input: AwardsInput): AwardsResult {
       map.set(start, after);
       let bestOther = -1;
       for (const [other, km] of map) if (other !== start && km > bestOther) bestOther = km;
-      const key = `rec:${kind}:${dateKey(start)}`;
+      const key = `${pre}rec:${kind}:${dateKey(start)}`;
       if (bestOther >= 0 && after > bestOther && !earned.has(key)) {
         earned.add(key);
         victory('period', key, kind === 'week' ? 'Tu semana con más kilómetros' : 'Tu mes con más kilómetros', fmtKm(after), r);
@@ -312,14 +347,15 @@ export function computeAwards(input: AwardsInput): AwardsResult {
       if (cum >= g.target && !periodGoalDone.has(gk)) {
         periodGoalDone.add(gk);
         goalCount++;
-        const key = `goal:${g.id}:${dateKey(pStart)}`;
+        const key = `${pre}goal:${g.id}:${dateKey(pStart)}`;
         events.push({ key, kind: 'goal', title: 'Meta cumplida', detail: undefined, rideId: r.id, t: r.startT, usesGain: g.metric === 'elevation' });
         earn('goals', goalCount, r);
       }
     }
   }
 
-  for (const p of input.programsDone ?? []) {
+  // Los programas para seguir son de bici.
+  for (const p of run ? [] : (input.programsDone ?? [])) {
     events.push({ key: `badge:program:${p.id}`, kind: 'badge', title: `Terminaste «${p.name}»`, tier: 'gold', rideId: null, t: p.t });
   }
   events.sort((a, b) => a.t - b.t);
@@ -337,12 +373,12 @@ export function computeAwards(input: AwardsInput): AwardsResult {
     bikeKm: Math.max(0, ...bikeKm.values()),
   };
   const next: NextAward[] = [];
-  for (const fam of FAMILIES) {
+  for (const fam of families) {
     const cur = current[fam.id];
     if (cur === undefined) continue;
-    const th = fam.thresholds.find((t) => !earned.has(badgeKey(fam.id, t)));
+    const th = fam.thresholds.find((t) => !earned.has(badgeKey(fam.id, t, sport)));
     if (th === undefined) continue;
-    next.push({ key: badgeKey(fam.id, th), family: fam.id, title: fam.title(th), current: cur, target: th, unit: fam.unit, fraction: Math.min(1, cur / th) });
+    next.push({ key: badgeKey(fam.id, th, sport), family: fam.id, title: fam.title(th), current: cur, target: th, unit: fam.unit, fraction: Math.min(1, cur / th) });
   }
   next.sort((a, b) => b.fraction - a.fraction);
 

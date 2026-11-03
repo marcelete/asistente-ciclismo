@@ -19,6 +19,8 @@ export interface PlanInput {
   weeksToEvent?: number;
   /** Aumento semanal máximo de CTL que se acepta (puntos por semana). */
   maxRamp?: number;
+  /** Fuerza la fase de la semana (la periodización decide cuándo toca cargar, recuperar o afinar). */
+  phaseOverride?: WeekPlan['phase'];
 }
 
 export interface PlannedSession {
@@ -58,6 +60,7 @@ function roundTo5(n: number): number {
 }
 
 function choosePhase(i: PlanInput): WeekPlan['phase'] {
+  if (i.phaseOverride) return i.phaseOverride;
   if (i.goal === 'event' && i.weeksToEvent !== undefined && i.weeksToEvent <= 1) return 'taper';
   const tsb = i.ctl - i.atl;
   if (tsb < -25) return 'recover';

@@ -1,8 +1,11 @@
 /**
  * Catálogo de premios (insignias). La clave de cada una es `badge:<familia>:<umbral>`, estable
  * aunque cambie el orden en que llegan las salidas. Los niveles (bronce, plata, oro y platino)
- * salen de la posición del umbral dentro de su familia. Solo cuentan las salidas en bici.
+ * salen de la posición del umbral dentro de su familia. Cada deporte tiene sus premios (pedido 15):
+ * las claves de correr llevan el prefijo `run:` y algunas familias cambian de umbrales y textos.
  */
+import type { TrainSport } from '../stats/sport';
+
 export type Tier = 'bronze' | 'silver' | 'gold' | 'platinum';
 export const TIERS: Tier[] = ['bronze', 'silver', 'gold', 'platinum'];
 export const TIER_LABEL: Record<Tier, string> = { bronze: 'Bronce', silver: 'Plata', gold: 'Oro', platinum: 'Platino' };
@@ -183,9 +186,56 @@ export const FAMILIES: BadgeFamily[] = [
   },
 ];
 
-export const familyOf = (id: AwardMetric): BadgeFamily => FAMILIES.find((f) => f.id === id)!;
+/** Ritmo "m:ss" de una velocidad en km/h. */
+const paceOf = (kmh: number) => {
+  const sec = Math.round(3600 / kmh);
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+};
 
-export const badgeKey = (family: AwardMetric, threshold: number) => `badge:${family}:${threshold}`;
+const RUN_DISTANCE_NAME: Record<number, string> = { 21.1: 'Media maratón', 42.2: 'Maratón' };
+
+/** Cambios de las familias para correr; las que no están quedan iguales (salvo `bikeKm`, que no va). */
+const RUN_FAMILIES: Partial<Record<AwardMetric, Partial<BadgeFamily>>> = {
+  km: { thresholds: [50, 100, 250, 500, 1000, 2500, 5000, 10000], title: (t) => `${n(t)} km corridos en total` },
+  rides: {
+    label: 'Cantidad de carreras',
+    unit: 'carreras',
+    thresholds: [1, 10, 25, 50, 100, 250, 500, 1000],
+    title: (t) => (t === 1 ? 'Tu primera carrera' : `Carrera número ${n(t)}`),
+  },
+  rideKm: {
+    label: 'Carrera larga',
+    thresholds: [5, 10, 21.1, 30, 42.2],
+    title: (t) => (RUN_DISTANCE_NAME[t] ? `${RUN_DISTANCE_NAME[t]}: ${n(t)} km` : `Una carrera de ${n(t)} km`),
+  },
+  rideGain: { label: 'Carrera con subida', thresholds: [200, 500, 1000], title: (t) => `${n(t)} m de subida en una carrera` },
+  rideHours: { label: 'Carrera de muchas horas', thresholds: [1, 1.5, 2, 3], title: (t) => `${n(t)} ${t === 1 ? 'hora' : 'horas'} corriendo en una carrera` },
+  daypart: { title: (t) => (t === 1 ? 'Madrugador: carrera antes de las 7' : 'Nocturno: carrera después de las 21') },
+  avgSpeed: {
+    label: 'Ritmo medio (carreras de 5 km o más)',
+    unit: 'km/h',
+    // 6:00, 5:00 y 4:30 por km.
+    thresholds: [10, 12, 13.334],
+    title: (t) => `Ritmo de ${paceOf(t)} por km en 5 km o más`,
+  },
+  monthKm: { thresholds: [50, 100, 200, 300], title: (t) => `${n(t)} km corridos en un mes` },
+  cold: { title: (t) => `Carrera con ${10 - t} °C o menos` },
+  heat: { title: (t) => `Carrera con ${t} °C o más` },
+  wind: { title: (t) => `Carrera con viento de ${t} km/h o más` },
+};
+
+/** Familias de premios de un deporte. */
+export function familiesFor(sport: TrainSport): BadgeFamily[] {
+  if (sport === 'bike') return FAMILIES;
+  return FAMILIES.filter((f) => f.id !== 'bikeKm').map((f) => ({ ...f, ...RUN_FAMILIES[f.id] }));
+}
+
+export const familyOf = (id: AwardMetric, sport: TrainSport = 'bike'): BadgeFamily => familiesFor(sport).find((f) => f.id === id)!;
+
+/** Prefijo de las claves de un deporte: las de bici quedan como antes del pedido 15. */
+export const sportKeyPrefix = (sport: TrainSport) => (sport === 'run' ? 'run:' : '');
+
+export const badgeKey = (family: AwardMetric, threshold: number, sport: TrainSport = 'bike') => `${sportKeyPrefix(sport)}badge:${family}:${threshold}`;
 
 /** Nivel de un umbral según su posición dentro de la familia. */
 export function tierOf(family: BadgeFamily, threshold: number): Tier {

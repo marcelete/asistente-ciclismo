@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Alert, Text, View } from 'react-native';
 import { BIKE_TYPE_LABEL, partStatus, tireLabel, totalsByBike } from '../../core/bikes/bikes';
 import type { Bike, BikePart } from '../../core/bikes/bikes';
+import { isSport } from '../../core/stats/sport';
 import { useStore } from '../../data/store';
 import { log } from '../../services/log';
 import { BikeForm, useBikeDraft } from '../BikeForm';
@@ -121,7 +122,9 @@ function Parts({ bike, parts, kmNow }: { bike: Bike; parts: ReturnType<typeof pa
 }
 
 export function BikesScreen() {
-  const { bikes, bikeParts, rides, saveBike, removeBike } = useStore();
+  const { bikes, bikeParts, trainingRides, saveBike, removeBike } = useStore();
+  // Los km de cada bici salen solo de las salidas en bici, aunque estés mirando correr.
+  const rides = useMemo(() => trainingRides.filter(isSport('bike')), [trainingRides]);
   const s = useStyles();
   const l = useLocal();
   const [editing, setEditing] = useState<string | 'new' | null>(null);

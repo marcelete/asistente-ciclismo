@@ -100,6 +100,7 @@ export function parseGpxTrack(xml: string): GpxTrack {
           speed: findExt(pt.extensions, ['speed']),
           hr: findExt(pt.extensions, ['hr', 'heartrate']),
           acc: findExt(pt.extensions, ['accuracy_horizontal', 'hacc', 'accuracy']),
+          cad: findExt(pt.extensions, ['cad', 'cadence', 'runcadence']),
         });
       }
     }

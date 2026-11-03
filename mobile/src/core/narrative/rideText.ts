@@ -3,6 +3,7 @@ import type { AwardEvent } from '../awards/engine';
 import type { FormStatus } from '../load/training';
 import { rideAvgSpeed, rideElevation } from '../stats/rides';
 import type { RideRecord } from '../stats/rides';
+import type { TrainSport } from '../stats/sport';
 import type { WeatherData } from '../weather/weather';
 
 /**
@@ -12,7 +13,9 @@ import type { WeatherData } from '../weather/weather';
  */
 export interface RideTextInput {
   ride: RideRecord;
-  /** Salidas en bici anteriores (se usan las de los 30 días previos). */
+  /** Deporte de la salida: cambia los verbos y si se habla de velocidad o de ritmo. */
+  sport?: TrainSport;
+  /** Salidas anteriores del mismo deporte (se usan las de los 30 días previos). */
   history: RideRecord[];
   autoPause: boolean;
   form: FormStatus | null;
@@ -44,7 +47,8 @@ const good = (v: number) => Number.isFinite(v) && v > 0;
 const CARDINAL = ['norte', 'noreste', 'este', 'sureste', 'sur', 'suroeste', 'oeste', 'noroeste'];
 
 function pick<T>(h: number, shift: number, options: T[]): T {
-  return options[(h >> shift) % options.length];
+  // `>>>`: el hash es sin signo; con `>>` un hash grande daba un índice negativo y la frase salía vacía.
+  return options[(h >>> shift) % options.length];
 }
 
 export function rideText(input: RideTextInput): string[] {
@@ -53,6 +57,15 @@ export function rideText(input: RideTextInput): string[] {
   const out: string[] = [];
   const km = ride.distance / 1000;
   const elev = rideElevation(ride);
+  const run = input.sport === 'run';
+  const did = run ? 'Corriste' : 'Pedaleaste';
+  const noun = run ? 'una carrera' : 'una salida';
+  const speedText = () => {
+    const v = rideAvgSpeed(ride, autoPause);
+    if (!run) return `a ${num1(v * 3.6)} km/h de media`;
+    const sec = v > 0 ? Math.round(1000 / v) : 0;
+    return `a un ritmo medio de ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')} por km`;
+  };
 
   // 1. Victorias: lo más lindo va primero.
   const wins = input.victories.filter((v) => v.kind !== 'badge');
@@ -61,7 +74,7 @@ export function rideText(input: RideTextInput): string[] {
     out.push(
       wins.length === 1
         ? pick(h, 1, [`¡Buena! ${first.title}${first.detail ? ` (${first.detail})` : ''}.`, `Hubo una victoria: ${first.title.toLowerCase()}${first.detail ? ` (${first.detail})` : ''}.`])
-        : `Salida con ${wins.length} victorias, entre ellas: ${first.title.toLowerCase()}${first.detail ? ` (${first.detail})` : ''}.`,
+        : `${run ? 'Carrera' : 'Salida'} con ${wins.length} victorias, entre ellas: ${first.title.toLowerCase()}${first.detail ? ` (${first.detail})` : ''}.`,
     );
   }
 
@@ -74,13 +87,13 @@ export function rideText(input: RideTextInput): string[] {
       const word = Math.abs(diff) < 5 ? 'parecida a' : diff > 0 ? `un ${num0(diff)} % más larga que` : `un ${num0(-diff)} % más corta que`;
       out.push(
         pick(h, 3, [
-          `Pedaleaste ${num1(km)} km, una salida ${word} tu promedio de los últimos 30 días (${num1(avgKm)} km).`,
+          `${did} ${num1(km)} km, ${noun} ${word} tu promedio de los últimos 30 días (${num1(avgKm)} km).`,
           `Fueron ${num1(km)} km: ${word} lo que venías haciendo (${num1(avgKm)} km de promedio en 30 días).`,
         ]),
       );
     }
   } else if (good(km)) {
-    out.push(`Pedaleaste ${num1(km)} km a ${num1(rideAvgSpeed(ride, autoPause) * 3.6)} km/h de media.`);
+    out.push(`${did} ${num1(km)} km ${speedText()}.`);
   }
 
   // 3. Lo más llamativo del recorrido: la subida más dura, o el desnivel.

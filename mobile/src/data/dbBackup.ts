@@ -1,6 +1,7 @@
 import type {
   BackupAwardSeen,
   BackupBike,
+  BackupCoach,
   BackupData,
   BackupPart,
   BackupProfile,
@@ -10,10 +11,14 @@ import type {
   LocalIndex,
   RestorePlan,
 } from '../core/export/backup';
+import { programById } from '../core/plan/programs';
 import { mergeDem } from '../core/elevation/profile';
 import type { Goal } from '../core/goals/goals';
+import { sanitizeOverride } from '../core/stats/sport';
 import { ANALYSIS_COLUMNS, analysisValues, conn, loadGoals, loadRides, loadSetting, writeProfile } from './db';
 import { unpackProfile } from './profileCodec';
+import { loadMacro, loadCoachSessions } from './dbCoach';
+import { loadActiveProgram, loadCompletedPrograms } from './programs';
 import { sanitizeSettings } from './settings';
 import type { Settings } from './settings';
 
@@ -44,7 +49,7 @@ export function readBackupData(settings: Settings): BackupData {
   const rides: BackupRide[] = loadRides().map((r) => {
     const e = extra.get(r.id);
     const o = e?.counted_override;
-    return { ...r, bikeId: e?.bike_id ?? null, countedOverride: o === 0 || o === 1 ? o : null };
+    return { ...r, bikeId: e?.bike_id ?? null, countedOverride: sanitizeOverride(o) };
   });
   const profiles: BackupProfile[] = d
     .getAllSync<{ ride_id: string; points: string; dem_done: number }>('SELECT ride_id, points, dem_done FROM profiles')
@@ -102,6 +107,8 @@ export function readBackupData(settings: Settings): BackupData {
     weather,
     awardsSeen,
     awardsInit: loadSetting<boolean>('awardsInit', false),
+    programs: { active: loadActiveProgram(), completed: loadCompletedPrograms() },
+    coach: readCoachBackup(),
   };
 }
 
@@ -128,6 +135,48 @@ export function readLocalIndex(): LocalIndex {
     weatherIds: ids('SELECT ride_id AS id FROM weather'),
     awardKeys: ids('SELECT key AS id FROM awards_seen'),
   };
+}
+
+type Db = ReturnType<typeof conn>;
+
+function readCoachBackup(): BackupCoach {
+  const macro = loadMacro();
+  return {
+    macro: macro ? JSON.stringify(macro) : null,
+    sessions: loadCoachSessions(),
+    wellness: conn().getAllSync<{ date: string; sleep: number; mood: number; fatigue: number }>('SELECT date, sleep, mood, fatigue FROM wellness ORDER BY date'),
+  };
+}
+
+/** Suma lo que falta del entrenador: nunca pisa sesiones ni bienestar ya cargados, y el plan solo entra si no hay otro. */
+function restoreCoach(d: Db, coach: RestorePlan['coach']): void {
+  for (const s of coach.sessions) {
+    d.runSync('INSERT OR IGNORE INTO coach_sessions (date, workout_id, status, ride_id, rpe, minutes, note, done_t) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+      s.date,
+      s.workoutId,
+      s.status,
+      s.rideId,
+      s.rpe,
+      s.minutes,
+      s.note,
+      s.doneT,
+    ]);
+  }
+  for (const w of coach.wellness) {
+    d.runSync('INSERT OR IGNORE INTO wellness (date, sleep, mood, fatigue) VALUES (?, ?, ?, ?)', [w.date, w.sleep, w.mood, w.fatigue]);
+  }
+  if (coach.macro) d.runSync('INSERT OR IGNORE INTO coach_plan (id, macro, created_t) VALUES (1, ?, ?)', [coach.macro, Date.now()]);
+}
+
+/** Suma los programas terminados y deja el activo solo si acá no hay ninguno. */
+function restorePrograms(d: Db, programs: RestorePlan['programs']): void {
+  const put = (key: string, value: unknown) =>
+    d.runSync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, JSON.stringify(value)]);
+  const done = loadCompletedPrograms();
+  const merged = [...done, ...programs.completed.filter((c) => !done.some((x) => x.id === c.id) && programById(c.id))];
+  if (merged.length !== done.length) put('completedPrograms', merged);
+  const a = programs.active;
+  if (a && programById(a.id) && !loadActiveProgram()) put('activeProgram', a);
 }
 
 export interface RestoreOptions {
@@ -180,7 +229,7 @@ export async function applyRestore(plan: RestorePlan, opts: RestoreOptions): Pro
       writeProfile(d, p.rideId, merged, merged.every((q) => q.dem !== null));
     }
     for (const g of plan.goals as Goal[]) {
-      d.runSync('INSERT OR IGNORE INTO goals (id, period, metric, target) VALUES (?, ?, ?, ?)', [g.id, g.period, g.metric, g.target]);
+      d.runSync('INSERT OR IGNORE INTO goals (id, period, metric, target, sport) VALUES (?, ?, ?, ?, ?)', [g.id, g.period, g.metric, g.target, g.sport ?? 'bike']);
     }
     for (const b of plan.bikes) {
       d.runSync(
@@ -216,6 +265,8 @@ export async function applyRestore(plan: RestorePlan, opts: RestoreOptions): Pro
     for (const a of plan.awardsSeen) {
       d.runSync('INSERT OR IGNORE INTO awards_seen (key, t) VALUES (?, ?)', [a.key, a.t]);
     }
+    restorePrograms(d, plan.programs);
+    restoreCoach(d, plan.coach);
     if (opts.awardsInit) d.runSync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['awardsInit', 'true']);
     if (opts.settings) {
       const clean = sanitizeSettings(opts.settings);

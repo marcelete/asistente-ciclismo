@@ -2,6 +2,8 @@ import { daysLeft, elapsedFraction, periodRange, ridesIn } from '../stats/period
 import type { PeriodRange } from '../stats/periods';
 import { rideElevation, rideTime } from '../stats/rides';
 import type { RideRecord } from '../stats/rides';
+import { isSport } from '../stats/sport';
+import type { TrainSport } from '../stats/sport';
 
 export type GoalPeriod = 'week' | 'month' | 'year';
 export type GoalMetric = 'rides' | 'distance' | 'time' | 'elevation';
@@ -12,6 +14,8 @@ export interface Goal {
   period: GoalPeriod;
   metric: GoalMetric;
   target: number;
+  /** Deporte de la meta (pedido 15). Sin dato, bici: las metas de antes eran todas de bici. */
+  sport?: TrainSport;
 }
 
 export interface GoalProgress {
@@ -55,7 +59,9 @@ export function metricValue(metric: GoalMetric, rides: RideRecord[], autoPause: 
 /** Progreso de una meta en el período que contiene `now`. El tiempo respeta la preferencia de autopausa. */
 export function goalProgress(goal: Goal, rides: RideRecord[], now: number, autoPause: boolean): GoalProgress {
   const range = periodRange(goal.period, now);
-  const value = metricValue(goal.metric, ridesIn(rides, range), autoPause);
+  // Cada meta mira solo las salidas de su deporte: se le pueden pasar todas.
+  const own = rides.filter(isSport(goal.sport ?? 'bike'));
+  const value = metricValue(goal.metric, ridesIn(own, range), autoPause);
   const elapsed = elapsedFraction(range, now);
   const expected = goal.target * elapsed;
   const done = value >= goal.target;

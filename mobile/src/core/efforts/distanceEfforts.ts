@@ -1,5 +1,25 @@
-/** Distancias de los mejores tiempos, en metros. */
-export const EFFORT_DISTANCES_M = [1000, 5000, 10000, 20000, 40000, 50000, 100000] as const;
+import type { TrainSport } from '../stats/sport';
+
+/** Distancias de los mejores tiempos en bici, en metros. */
+export const BIKE_EFFORT_DISTANCES_M = [1000, 5000, 10000, 20000, 40000, 50000, 100000] as const;
+/** Distancias de los mejores tiempos al correr: 400 m, 1 km, milla, 5 km, 10 km, media y maratón. */
+export const RUN_EFFORT_DISTANCES_M = [400, 1000, 1609, 5000, 10000, 21097, 42195] as const;
+
+/** Se calculan todas en cada salida (así cambiar el deporte de una salida no obliga a releer su GPX). */
+export const EFFORT_DISTANCES_M: readonly number[] = [...new Set<number>([...RUN_EFFORT_DISTANCES_M, ...BIKE_EFFORT_DISTANCES_M])].sort((a, b) => a - b);
+
+export function effortDistancesFor(sport: TrainSport): readonly number[] {
+  return sport === 'run' ? RUN_EFFORT_DISTANCES_M : BIKE_EFFORT_DISTANCES_M;
+}
+
+/** Nombre de una distancia de mejores tiempos: "400 m", "1 milla", "Media maratón", "10 km". */
+export function effortLabel(d: number): string {
+  if (d === 1609) return '1 milla';
+  if (d === 21097) return 'Media maratón';
+  if (d === 42195) return 'Maratón';
+  if (d < 1000) return `${d} m`;
+  return `${String(d / 1000).replace('.', ',')} km`;
+}
 
 /** Velocidad máxima creíble (m/s): una ventana más rápida que esto es un error de datos. */
 const MAX_PLAUSIBLE_SPEED = 28;

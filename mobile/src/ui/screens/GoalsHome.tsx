@@ -1,25 +1,29 @@
 import { useState } from 'react';
 import { Screen, Segmented } from '../components';
+import { SportSwitch } from '../SportSwitch';
+import { CoachPlanPanel, TodayPanel } from './CoachScreen';
 import { GoalsScreen } from './GoalsScreen';
-import { PlanPanel } from './PlanScreen';
 import { PredictionsPanel } from './PredictionsScreen';
 
-type Tab = 'goals' | 'plan' | 'predict';
+type Tab = 'today' | 'plan' | 'goals' | 'predict';
 const TABS: { value: Tab; label: string }[] = [
-  { value: 'goals', label: 'Metas' },
+  { value: 'today', label: 'Hoy' },
   { value: 'plan', label: 'Plan' },
-  { value: 'predict', label: 'Predicciones' },
+  { value: 'goals', label: 'Metas' },
+  { value: 'predict', label: 'Predic.' },
 ];
 
-/** Pestaña Metas: las metas, el plan semanal con los programas, y las predicciones. */
+const TITLES: Record<Tab, string> = { today: 'Entrenar', plan: 'Plan', goals: 'Metas', predict: 'Predicciones' };
+
+/** Pestaña Entrenar: la sesión de hoy, el plan por periodización, las metas y las predicciones. */
 export function GoalsHome() {
-  const [tab, setTab] = useState<Tab>('goals');
+  const [tab, setTab] = useState<Tab>('today');
   const switcher = <Segmented label="Vista" options={TABS} value={tab} onChange={setTab} />;
   if (tab === 'goals') return <GoalsScreen switcher={switcher} />;
   return (
-    <Screen title={tab === 'plan' ? 'Plan' : 'Predicciones'} keyboard>
+    <Screen title={TITLES[tab]} right={<SportSwitch />} keyboard>
       {switcher}
-      {tab === 'plan' ? <PlanPanel /> : <PredictionsPanel />}
+      {tab === 'today' ? <TodayPanel onSetup={() => setTab('plan')} /> : tab === 'plan' ? <CoachPlanPanel /> : <PredictionsPanel />}
     </Screen>
   );
 }

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { Text, View } from 'react-native';
-import { countsAsRide } from '../core/stats/sport';
+import { SPORT_WORDS, sportOf } from '../core/stats/sport';
 import { useAwards } from '../data/awards';
 import { useStore } from '../data/store';
 import { TraceThumb } from './map/TraceThumb';
@@ -8,7 +8,7 @@ import { rideAvgSpeed, rideElevation, rideTime, rideTitle, rideTypeLabel } from 
 import type { RideRecord } from '../core/stats/rides';
 import { Card, Chip, Icon, useStyles } from './components';
 import type { IconName } from './components';
-import { formatDuration, formatKm, formatKmh, formatMeters, formatRideDate } from './format';
+import { formatDuration, formatKm, formatMeters, formatRideDate, speedFor } from './format';
 import { makeStyles, useTheme } from './theme';
 
 /** Abre el detalle de una salida. */
@@ -39,7 +39,9 @@ export function RideRow({ ride, now, autoPause }: { ride: RideRecord; now: numbe
   const title = rideTitle(ride);
   const date = formatRideDate(ride.startT, now);
   const time = rideTime(ride, autoPause);
-  const counts = countsAsRide(ride);
+  const sport = sportOf(ride);
+  const counts = sport !== null;
+  const speed = speedFor(sport ?? 'bike', rideAvgSpeed(ride, autoPause));
   const { change } = useStore();
   const awards = useAwards().byRide.get(ride.id)?.length ?? 0;
   return (
@@ -49,7 +51,7 @@ export function RideRow({ ride, now, autoPause }: { ride: RideRecord; now: numbe
     >
       <View style={l.head}>
         <View style={[l.badge, { backgroundColor: t.surfaceAlt }]}>
-          <Icon name="directions_bike" size={20} color={t.metric.distance} />
+          <Icon name={SPORT_WORDS[sport ?? 'bike'].icon} size={20} color={t.metric.distance} />
         </View>
         <View style={s.flex}>
           <Text style={s.h3} numberOfLines={1}>
@@ -72,7 +74,7 @@ export function RideRow({ ride, now, autoPause }: { ride: RideRecord; now: numbe
       <View style={l.metrics}>
         <Mini icon="straighten" value={formatKm(ride.distance)} unit="km" color={t.metric.distance} />
         <Mini icon="schedule" value={formatDuration(time)} color={t.metric.time} />
-        <Mini icon="speed" value={formatKmh(rideAvgSpeed(ride, autoPause))} unit="km/h" color={t.metric.speed} />
+        <Mini icon="speed" value={speed.value} unit={speed.unit} color={t.metric.speed} />
         <Mini icon="trending_up" value={formatMeters(e.gain)} unit="m" color={t.metric.elevation} />
         {ride.avgHr !== null ? <Mini icon="favorite" value={String(Math.round(ride.avgHr))} unit="lpm" color={t.metric.hr} /> : null}
       </View>

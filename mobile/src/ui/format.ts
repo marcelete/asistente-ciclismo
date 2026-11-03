@@ -1,3 +1,5 @@
+import { effortLabel } from '../core/efforts/distanceEfforts';
+
 /**
  * Formatos de números y fechas en español rioplatense: coma decimal y punto de miles. Todos
  * devuelven "--" si el valor no es un número válido, en vez de mostrar "NaN".
@@ -18,6 +20,47 @@ export function formatKmh(mps: number): string {
   return formatNumber(mps * 3.6, 1);
 }
 
+/** Segundos por km → "5:32" (null o inválido → "--"). */
+export function formatPaceSec(secPerKm: number | null): string {
+  if (secPerKm === null || !Number.isFinite(secPerKm) || secPerKm <= 0) return '--';
+  const s = Math.round(secPerKm);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Lee un tiempo escrito como "50:00", "1:45:30" o "45" (minutos). Devuelve segundos, o null si
+ * no se entiende.
+ */
+export function parseClock(text: string): number | null {
+  const t = text.trim();
+  if (!/^\d{1,3}(:\d{1,2}){0,2}$/.test(t)) return null;
+  const parts = t.split(':').map(Number);
+  if (parts.slice(1).some((p) => p >= 60)) return null;
+  if (parts.length === 1) return parts[0] * 60;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parts[0] * 3600 + parts[1] * 60 + parts[2];
+}
+
+/** Segundos → "50:00" o "1:45:30", para volver a mostrar lo que se cargó. */
+export function clockText(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
+}
+
+/** Ritmo de correr: m/s → "5:32" (min/km). Más lento que 30 min/km o detenido → "--". */
+export function formatPace(mps: number): string {
+  if (!Number.isFinite(mps) || mps <= 1000 / 1800) return '--';
+  return formatPaceSec(1000 / mps);
+}
+
+/** Velocidad o ritmo según el deporte: el número y su unidad. */
+export function speedFor(sport: 'bike' | 'run', mps: number): { value: string; unit: string } {
+  return sport === 'run' ? { value: formatPace(mps), unit: '/km' } : { value: formatKmh(mps), unit: 'km/h' };
+}
+
 /**
  * Metros → kilómetros: dos decimales hasta 100 km ("4,17"), uno hasta 1.000 ("142,5") y ninguno
  * después ("1.234"), para que los totales grandes se lean de un vistazo.
@@ -30,6 +73,7 @@ export function formatKm(meters: number): string {
 /** Unidades que se cuentan de a uno: van sin decimales y con singular ("1 salida"). */
 const COUNT_UNITS: Record<string, string> = {
   salidas: 'salida',
+  carreras: 'carrera',
   días: 'día',
   semanas: 'semana',
   metas: 'meta',
@@ -132,7 +176,7 @@ export function formatChange(now: number, before: number): Change | null {
 
 /** Distancia de un mejor tiempo ("1 km", "40 km", "100 km"). */
 export function formatEffortDistance(m: number): string {
-  return `${formatNumber(m / 1000, m % 1000 === 0 ? 0 : 1)} km`;
+  return effortLabel(m);
 }
 
 /**

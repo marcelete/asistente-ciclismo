@@ -1,9 +1,10 @@
 import type { EnergyEstimate } from '../analysis/profileMetrics';
-import { EFFORT_DISTANCES_M } from '../efforts/distanceEfforts';
+import { EFFORT_DISTANCES_M, effortLabel } from '../efforts/distanceEfforts';
 import { hrLoad, zoneSeconds } from '../load/training';
 import type { HrProfile } from '../load/hr';
 import { rideAvgSpeed, rideElevation } from '../stats/rides';
 import type { RideRecord } from '../stats/rides';
+import { sportOf } from '../stats/sport';
 import { isoLocal, num } from './csv';
 import type { CsvValue } from './csv';
 
@@ -43,9 +44,9 @@ const ms2kmh = (v: number) => num(v * 3.6, 2);
 
 function effortColumns(): Column<RideRecord, RideExportContext>[] {
   return EFFORT_DISTANCES_M.map((d) => ({
-    name: `mejor_${d / 1000}km_seg`,
+    name: d < 1000 || d % 1000 !== 0 ? `mejor_${d}m_seg` : `mejor_${d / 1000}km_seg`,
     unit: 's',
-    description: `Mejor tiempo dentro de la salida para ${d / 1000} km seguidos. Vacío si la salida es más corta.`,
+    description: `Mejor tiempo dentro de la salida para ${effortLabel(d).toLowerCase()} seguidos. Vacío si la salida es más corta.`,
     value: (r) => num(r.efforts?.[d] ?? null, 1),
   }));
 }
@@ -59,9 +60,16 @@ export const RIDE_COLUMNS: Column<RideRecord, RideExportContext>[] = [
   {
     name: 'cuenta',
     unit: 'sí/no',
-    description: 'Si cuenta como salida en bici. Las que no cuentan no suman a totales, rachas, metas ni récords.',
+    description: 'Si cuenta (en bici o corriendo). Las que no cuentan no suman a totales, rachas, metas ni récords.',
     value: (r, c) => (c.counted ? c.counted(r) : true),
   },
+  {
+    name: 'deporte',
+    unit: '',
+    description: 'Con qué deporte cuenta: bici o correr. Vacío si no cuenta. Cada deporte tiene sus totales y récords.',
+    value: (r) => sportOf(r),
+  },
+  { name: 'cadencia_media', unit: 'ppm', description: 'Cadencia media en movimiento (pedaleos o pasos por minuto), si el GPX la trae.', value: (r) => r.avgCadence ?? null },
   { name: 'bici', unit: '', description: 'Nombre de la bici de la salida.', value: (r, c) => c.bikeName?.(r) ?? null },
   { name: 'distancia_km', unit: 'km', description: 'Distancia recorrida.', value: (r) => m2km(r.distance) },
   { name: 'tiempo_total_seg', unit: 's', description: 'Tiempo transcurrido total, con las paradas.', value: (r) => num(r.elapsedSec, 0) },

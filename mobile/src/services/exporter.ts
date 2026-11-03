@@ -25,7 +25,7 @@ import { looksLikeZip, unzipStore, zipStore } from '../core/export/zip';
 import type { ZipEntry } from '../core/export/zip';
 import type { Goal } from '../core/goals/goals';
 import { resolveHrProfile, localDateKey } from '../core/load/training';
-import { countsAsRide } from '../core/stats/sport';
+import { countsAsRide, isSport, TRAIN_SPORTS } from '../core/stats/sport';
 import type { RideRecord } from '../core/stats/rides';
 import { loadProfile, loadSetting, saveSetting } from '../data/db';
 import { applyRestore, readBackupData, readLocalIndex } from '../data/dbBackup';
@@ -111,24 +111,26 @@ export async function buildEntries(snap: ExportSnapshot, opts: ExportOptions, no
   };
   const backup = readBackupData(settings);
   const counted = rides.filter(countsAsRide);
-  const totals = totalsByBike(counted, bikes);
+  // Los km por bici solo suman salidas en bici.
+  const totals = totalsByBike(counted.filter(isSport('bike')), bikes);
 
   // Segmentos, recorridos y logros: los mismos que ve la app.
   const segNames = new Map(loadSegments().map((x) => [x.id, x] as const));
   const efforts = loadEfforts();
   const routeOf = new Map<string, string>();
   for (const [route, ids] of routeMembers()) for (const id of ids) routeOf.set(id, route);
-  const awards = computeAwards({
-    rides: counted,
+  // Logros de cada deporte por separado, como en la app.
+  const awardsCommon = {
     goals,
     now,
     autoPause: settings.autoPause,
     segmentEfforts: efforts.map((e) => ({ segmentId: e.segmentId, segmentName: segNames.get(e.segmentId)?.name ?? 'segmento', rideId: e.rideId, duration: e.duration })),
     routeOf,
     weather: new Map([...loadWeather()].flatMap(([id, w]) => (w.data ? [[id, w.data] as const] : []))),
-  });
+  };
+  const awardEvents = TRAIN_SPORTS.flatMap((sport) => computeAwards({ ...awardsCommon, rides: counted.filter(isSport(sport)), sport }).events);
   const awardsByRide = new Map<string, string[]>();
-  for (const e of awards.events) if (e.rideId) awardsByRide.set(e.rideId, [...(awardsByRide.get(e.rideId) ?? []), e.title]);
+  for (const e of awardEvents) if (e.rideId) awardsByRide.set(e.rideId, [...(awardsByRide.get(e.rideId) ?? []), e.title]);
   const weatherRows = loadWeather();
   ctx.weather = (r) => weatherRows.get(r.id)?.data ?? null;
   ctx.routeId = (r) => routeOf.get(r.id) ?? null;
@@ -152,7 +154,7 @@ export async function buildEntries(snap: ExportSnapshot, opts: ExportOptions, no
       ),
     ],
     ['metas.csv', metasCsv(goals)],
-    ['logros.csv', logrosCsv(awards.events.map((e) => ({ key: e.key, kind: e.kind, title: e.title, rideId: e.rideId, t: e.t })))],
+    ['logros.csv', logrosCsv(awardEvents.map((e) => ({ key: e.key, kind: e.kind, title: e.title, rideId: e.rideId, t: e.t })))],
     ['bicis.csv', bicisCsv(backup.bikes, backup.bikeParts, (id) => ({ km: totals.get(id)?.km ?? 0, rides: totals.get(id)?.rides ?? 0 }))],
     ['forma_diaria.csv', formaDiariaCsv(rides.filter(countsAsRide), hr, now)],
     ['perfil.csv', perfilCsv(settings, hr)],

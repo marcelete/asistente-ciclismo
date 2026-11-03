@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Screen, Segmented } from '../components';
+import { SportSwitch } from '../SportSwitch';
 import { HeatMapPanel } from './HeatMapScreen';
 import { RidesScreen } from './RidesScreen';
 import { SegmentsPanel } from './SegmentsScreen';
@@ -17,7 +18,7 @@ export function RidesHome() {
   const switcher = <Segmented label="Vista" options={TABS} value={tab} onChange={setTab} />;
   if (tab === 'list') return <RidesScreen switcher={switcher} />;
   return (
-    <Screen title="Salidas">
+    <Screen title="Salidas" right={<SportSwitch />}>
       {switcher}
       {tab === 'map' ? <HeatMapPanel /> : <SegmentsPanel />}
     </Screen>

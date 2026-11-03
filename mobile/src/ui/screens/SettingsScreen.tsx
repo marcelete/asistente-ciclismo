@@ -112,6 +112,43 @@ export function SettingsScreen() {
         <Text style={s.muted}>“Sistema” sigue el modo claro u oscuro del celular, incluso si lo cambia solo a la noche.</Text>
       </Card>
 
+      <SectionTitle title="Entrenador en vivo" />
+      <Card>
+        <Toggle icon="record_voice_over" label="Voz" hint="Dice los bloques y si tenés que subir o bajar." value={settings.coach.voice} onChange={(v) => attempt('cambiar la voz', () => updateSettings({ coach: { ...settings.coach, voice: v } }))} />
+        <Toggle icon="volume_up" label="Pitidos" hint="Respeta los sonidos de arriba y el modo silencio." value={settings.coach.beeps} onChange={(v) => attempt('cambiar los pitidos', () => updateSettings({ coach: { ...settings.coach, beeps: v } }))} />
+        <Toggle icon="vibration" label="Vibración" hint="Una larga para subir (o apurar), dos cortas para bajar (o aflojar)." value={settings.coach.vibrate} onChange={(v) => attempt('cambiar la vibración', () => updateSettings({ coach: { ...settings.coach, vibrate: v } }))} />
+        <Text style={s.label}>Tolerancia de velocidad: ±{settings.coach.speedTolKmh} km/h</Text>
+        <Stepper
+          label={`±${settings.coach.speedTolKmh} km/h`}
+          a11y="Tolerancia de velocidad"
+          onMinus={() => attempt('cambiar la tolerancia', () => updateSettings({ coach: { ...settings.coach, speedTolKmh: Math.max(0.5, settings.coach.speedTolKmh - 0.5) } }))}
+          onPlus={() => attempt('cambiar la tolerancia', () => updateSettings({ coach: { ...settings.coach, speedTolKmh: Math.min(3, settings.coach.speedTolKmh + 0.5) } }))}
+        />
+        <Text style={s.label}>Correr: tolerancia de ritmo ±{settings.coach.paceTolSec} s por km</Text>
+        <Stepper
+          label={`±${settings.coach.paceTolSec} s/km`}
+          a11y="Tolerancia de ritmo"
+          onMinus={() => attempt('cambiar la tolerancia', () => updateSettings({ coach: { ...settings.coach, paceTolSec: Math.max(5, settings.coach.paceTolSec - 5) } }))}
+          onPlus={() => attempt('cambiar la tolerancia', () => updateSettings({ coach: { ...settings.coach, paceTolSec: Math.min(30, settings.coach.paceTolSec + 5) } }))}
+        />
+        <Text style={s.label}>
+          Correr: pasos por minuto en la técnica, de {settings.coach.cadenceMin} a {settings.coach.cadenceMax}
+        </Text>
+        <Stepper
+          label={`Desde ${settings.coach.cadenceMin}`}
+          a11y="Pasos por minuto mínimos"
+          onMinus={() => attempt('cambiar los pasos', () => updateSettings({ coach: { ...settings.coach, cadenceMin: Math.max(140, settings.coach.cadenceMin - 5) } }))}
+          onPlus={() => attempt('cambiar los pasos', () => updateSettings({ coach: { ...settings.coach, cadenceMin: Math.min(settings.coach.cadenceMax - 5, settings.coach.cadenceMin + 5) } }))}
+        />
+        <Stepper
+          label={`Hasta ${settings.coach.cadenceMax}`}
+          a11y="Pasos por minuto máximos"
+          onMinus={() => attempt('cambiar los pasos', () => updateSettings({ coach: { ...settings.coach, cadenceMax: Math.max(settings.coach.cadenceMin + 5, settings.coach.cadenceMax - 5) } }))}
+          onPlus={() => attempt('cambiar los pasos', () => updateSettings({ coach: { ...settings.coach, cadenceMax: Math.min(210, settings.coach.cadenceMax + 5) } }))}
+        />
+        <Text style={s.muted}>Los pasos se cuentan con el sensor del celular (permiso de actividad física) solo durante la sesión, y no se guardan uno por uno.</Text>
+      </Card>
+
       <SectionTitle title="Sonido y vibración" />
       <Card>
         <Toggle

@@ -4,6 +4,7 @@ import { Text, View } from 'react-native';
 import { altitudeSeries, climbsFromProfile, estimateEnergy, gradeSeries, speedSeries } from '../../core/analysis/profileMetrics';
 import type { ClimbDetail } from '../../core/analysis/profileMetrics';
 import { bikeOfRide, energyParams } from '../../core/bikes/bikes';
+import { effortDistancesFor } from '../../core/efforts/distanceEfforts';
 import { PRIVACY_ZONE_M } from '../../core/elevation/privacy';
 import { cumulativeGain, demAltitudes } from '../../core/elevation/profile';
 import { hrZoneRanges } from '../../core/load/hr';
@@ -15,7 +16,8 @@ import { programById, programProgress } from '../../core/plan/programs';
 import { loadActiveProgram } from '../../data/programs';
 import { records } from '../../core/stats/records';
 import { rideAvgSpeed, rideElevation, rideTime, rideTitle, rideTypeLabel } from '../../core/stats/rides';
-import { countsAsRide } from '../../core/stats/sport';
+import { SPORT_WORDS, isSport, sportOf } from '../../core/stats/sport';
+import type { TrainSport } from '../../core/stats/sport';
 import { isDemPending, loadProfile } from '../../data/db';
 import { useAwards } from '../../data/awards';
 import { loadEfforts, loadEffortsOfRide, loadSegments, routeMembers, routeOfRide } from '../../data/dbSegments';
@@ -27,7 +29,7 @@ import { LineChart } from '../charts/LineChart';
 import { ZoneChart } from '../charts/ZoneChart';
 import { BikePicker } from '../BikePicker';
 import { RideMap } from '../map/RideMap';
-import { Button, Card, Chip, EmptyState, Grid, Icon, Metric, Notice, Screen, SectionTitle, Toggle, useStyles } from '../components';
+import { Button, Card, Chip, EmptyState, Grid, Icon, Metric, Notice, Screen, SectionTitle, Segmented, useStyles } from '../components';
 import {
   cardinal,
   formatClock,
@@ -37,6 +39,8 @@ import {
   formatKmh,
   formatMeters,
   formatNumber,
+  formatPace,
+  speedFor,
 } from '../format';
 import { useHrProfile } from '../hooks';
 import { makeStyles, useTheme } from '../theme';
@@ -78,7 +82,7 @@ function ClimbRow({ c, index, onSave }: { c: ClimbDetail; index: number; onSave?
 }
 
 export function RideDetailScreen({ id }: { id: string }) {
-  const { change, rides, allRides, bikes, settings, refreshElevation, setRideBike, setRideCounted, reloadAll } = useStore();
+  const { change, trainingRides, allRides, bikes, settings, refreshElevation, setRideBike, setRideSport, reloadAll } = useStore();
   const s = useStyles();
   const l = useLocal();
   const t = useTheme();
@@ -108,10 +112,14 @@ export function RideDetailScreen({ id }: { id: string }) {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const ride = allRides.find((r) => r.id === id);
+  // Deporte de esta salida (puede no ser el que estás mirando): se compara con las de su mismo deporte.
+  const rideSport = ride ? sportOf(ride) : null;
+  const kind: TrainSport = rideSport ?? 'bike';
+  const rides = useMemo(() => trainingRides.filter(isSport(kind)), [trainingRides, kind]);
   // Se vuelve a leer cuando cambia la salida (por ejemplo, al llegar la altitud del mapa).
   const profile = useMemo(() => (ride ? loadProfile(ride.id) : null), [ride]);
   const demPending = useMemo(() => (ride ? isDemPending(ride.id) : false), [ride]);
-  const allRecords = useMemo(() => records(rides), [rides]);
+  const allRecords = useMemo(() => records(rides, kind), [rides, kind]);
 
   const derived = useMemo(() => {
     if (!profile || profile.length < 2) return null;
@@ -130,6 +138,8 @@ export function RideDetailScreen({ id }: { id: string }) {
       dem,
       grade: alt ? gradeSeries(profile, alt.values) : null,
       speed: hasSpeed ? speeds.map((v) => (v === null ? null : v * 3.6)) : null,
+      // Ritmo en min/km para correr; lo más lento que 20 min/km (parado o caminando) no se dibuja.
+      pace: hasSpeed ? speeds.map((v) => (v === null || v < 1000 / 1200 ? null : 1000 / v / 60)) : null,
       hr: hasHr ? hrValues : null,
       cum: dem ? cumulativeGain(dem) : gps ? cumulativeGain(gps, 5, 5) : null,
       climbs: climbsFromProfile(profile, alt),
@@ -148,10 +158,12 @@ export function RideDetailScreen({ id }: { id: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const weatherRow = useMemo(() => loadRideWeather(id), [id, change.seq]);
   const weather = weatherRow?.data ?? null;
+  // La potencia es un modelo de bici: al correr solo se estiman las calorías (≈ 1 kcal por kg y km).
   const energy = useMemo(
-    () => (profile && params ? estimateEnergy(profile, { ...params, env: weather }, derived?.alt) : null),
-    [profile, params, derived, weather],
+    () => (kind === 'bike' && profile && params ? estimateEnergy(profile, { ...params, env: weather }, derived?.alt) : null),
+    [kind, profile, params, derived, weather],
   );
+  const runKcal = kind === 'run' && ride && a.weightKg !== null ? Math.round(a.weightKg * (ride.distance / 1000)) : null;
 
   const { goals } = useStore();
   const analysis = useMemo(() => {
@@ -167,6 +179,7 @@ export function RideDetailScreen({ id }: { id: string }) {
     const prog = active && def ? programProgress(def, active.startT, rides) : null;
     return rideText({
       ride,
+      sport: kind,
       history: rides,
       autoPause: autoPauseSetting,
       form: lastForm ? formStatus(lastForm.tsb) : null,
@@ -180,7 +193,7 @@ export function RideDetailScreen({ id }: { id: string }) {
         : null,
       program: def && prog ? `${def.name}: ${prog.done} de ${prog.total} sesiones hechas.` : null,
     });
-  }, [ride, rides, hr, derived, goals, autoPauseSetting, weather, awardsOfRide, routeTimes]);
+  }, [ride, kind, rides, hr, derived, goals, autoPauseSetting, weather, awardsOfRide, routeTimes]);
 
   if (!ride) {
     return (
@@ -231,6 +244,7 @@ export function RideDetailScreen({ id }: { id: string }) {
 
   const efforts = Object.entries(ride.efforts ?? {})
     .map(([k, v]) => [Number(k), v] as [number, number])
+    .filter(([d]) => effortDistancesFor(kind).includes(d))
     .sort((a, b) => a[0] - b[0]);
 
   return (
@@ -240,7 +254,7 @@ export function RideDetailScreen({ id }: { id: string }) {
       <View style={l.titleBlock}>
         <Text style={s.body}>{longDate(ride.startT, ride.endT)}</Text>
         <View style={l.chips}>
-          {type ? <Chip icon="directions_bike" label={type} /> : null}
+          {type ? <Chip icon={SPORT_WORDS[kind].icon} label={type} /> : null}
           <Chip
             icon={elev.source === 'dem' ? 'map' : 'satellite_alt'}
             label={elev.source === 'dem' ? 'Altitud del mapa' : 'Altitud del GPS'}
@@ -262,7 +276,7 @@ export function RideDetailScreen({ id }: { id: string }) {
 
       {awardsOfRide.length > 0 ? (
         <Card>
-          <Text style={s.h3}>Logros de esta salida</Text>
+          <Text style={s.h3}>Logros de esta {kind === 'run' ? 'carrera' : 'salida'}</Text>
           <View style={l.chips}>
             {awardsOfRide.map((e) => (
               <Chip key={e.key} icon="emoji_events" label={e.detail ? `${e.title} · ${e.detail}` : e.title} color={t.warn} />
@@ -271,15 +285,15 @@ export function RideDetailScreen({ id }: { id: string }) {
         </Card>
       ) : null}
 
-      {!countsAsRide(ride) ? (
-        <Notice tone="warn" text="Esta actividad no cuenta como salida en bici: no suma a totales, rachas, metas ni récords. Si OpenTracks se equivocó de tipo, activá el interruptor de abajo." />
+      {rideSport === null ? (
+        <Notice tone="warn" text="Esta actividad no cuenta como bici ni como carrera: no suma a totales, rachas, metas ni récords. Si OpenTracks se equivocó de tipo, elegí abajo con qué cuenta." />
       ) : null}
 
       <Card>
         <Grid min={130}>
           <Metric size="lg" label="Distancia" icon="straighten" tone="distance" value={formatKm(ride.distance)} unit="km" />
           <Metric size="lg" label={autoPause ? 'En movimiento' : 'Tiempo'} icon="schedule" tone="time" value={formatDuration(time)} />
-          <Metric size="lg" label="Vel. media" icon="speed" tone="speed" value={formatKmh(rideAvgSpeed(ride, autoPause))} unit="km/h" />
+          <Metric size="lg" label={kind === 'run' ? 'Ritmo medio' : 'Vel. media'} icon="speed" tone="speed" {...speedFor(kind, rideAvgSpeed(ride, autoPause))} />
           <Metric size="lg" label="Desnivel +" icon="trending_up" tone="elevation" value={formatMeters(elev.gain)} unit="m" />
         </Grid>
       </Card>
@@ -288,14 +302,16 @@ export function RideDetailScreen({ id }: { id: string }) {
         <Text style={s.h3}>Detalle</Text>
         <Grid min={130}>
           <Metric label={autoPause ? 'Tiempo transcurrido' : 'En movimiento'} icon="timer" tone="time" value={formatDuration(autoPause ? ride.elapsedSec : ride.movingSec)} />
-          <Metric label="Vel. máxima" icon="speed" tone="speed" value={formatKmh(ride.maxSpeed)} unit="km/h" />
+          <Metric label={kind === 'run' ? 'Ritmo más rápido' : 'Vel. máxima'} icon="speed" tone="speed" {...speedFor(kind, ride.maxSpeed)} />
           <Metric
-            label={autoPause ? 'Vel. media con paradas' : 'Vel. media en movimiento'}
+            label={kind === 'run' ? (autoPause ? 'Ritmo con paradas' : 'Ritmo en movimiento') : autoPause ? 'Vel. media con paradas' : 'Vel. media en movimiento'}
             icon="avg_pace"
             tone="speed"
-            value={formatKmh(rideAvgSpeed(ride, !autoPause))}
-            unit="km/h"
+            {...speedFor(kind, rideAvgSpeed(ride, !autoPause))}
           />
+          {ride.avgCadence ? (
+            <Metric label="Cadencia media" icon="directions_walk" tone="speed" value={String(Math.round(ride.avgCadence))} unit={kind === 'run' ? 'ppm' : 'rpm'} />
+          ) : null}
           <Metric label="Desnivel −" icon="trending_down" tone="elevation" value={formatMeters(elev.loss)} unit="m" />
           <Metric label="Altitud máxima" icon="landscape" tone="elevation" value={formatMeters(elev.maxAltitude)} unit="m" />
           <Metric label="Altitud mínima" icon="landscape" tone="elevation" value={formatMeters(elev.minAltitude)} unit="m" />
@@ -312,8 +328,11 @@ export function RideDetailScreen({ id }: { id: string }) {
           {energy ? <Metric label="Potencia media" icon="bolt" tone="power" value={formatNumber(energy.avgPower)} unit="W" hint="estimada" /> : null}
           {energy ? <Metric label="Trabajo" icon="bolt" tone="power" value={formatNumber(energy.workKj)} unit="kJ" hint="estimado" /> : null}
           {energy ? <Metric label="Calorías" icon="local_fire_department" tone="power" value={formatNumber(energy.kcal)} unit="kcal" hint="aprox." /> : null}
+          {runKcal !== null ? <Metric label="Calorías" icon="local_fire_department" tone="power" value={formatNumber(runKcal)} unit="kcal" hint="aprox." /> : null}
         </Grid>
-        {!mass ? (
+        {kind === 'run' ? (
+          a.weightKg === null ? <Text style={s.muted}>Cargá tu peso en Ajustes → Perfil para estimar las calorías.</Text> : null
+        ) : !mass ? (
           <Text style={s.muted}>
             Cargá tu peso en Ajustes → Perfil para estimar la potencia, el trabajo y las calorías.
           </Text>
@@ -325,15 +344,20 @@ export function RideDetailScreen({ id }: { id: string }) {
       </Card>
 
       <Card>
-        <Text style={s.h3}>Esta salida</Text>
-        <Toggle
-          icon="directions_bike"
-          label="Contar como salida en bici"
-          hint="Si OpenTracks se equivocó de tipo, forzá que cuente (o no) en totales, rachas, metas y récords."
-          value={countsAsRide(ride)}
-          onChange={(v) => setRideCounted(ride.id, v).catch((e) => log('error', 'ui', 'No se pudo cambiar si cuenta', e))}
+        <Text style={s.h3}>Esta {kind === 'run' ? 'carrera' : 'salida'}</Text>
+        <Text style={s.label}>Cuenta como</Text>
+        <Segmented<TrainSport | 'none'>
+          label="Cuenta como"
+          options={[
+            { value: 'bike', label: 'Bici' },
+            { value: 'run', label: 'Correr' },
+            { value: 'none', label: 'No cuenta' },
+          ]}
+          value={rideSport ?? 'none'}
+          onChange={(v) => setRideSport(ride.id, v).catch((e) => log('error', 'ui', 'No se pudo cambiar el deporte', e))}
         />
-        {bikes.length > 0 ? (
+        <Text style={s.muted}>Si OpenTracks se equivocó de tipo, elegí con qué deporte suma a totales, rachas, metas y récords.</Text>
+        {kind === 'run' || rideSport === null ? null : bikes.length > 0 ? (
           <>
             <Text style={s.label}>Bici de esta salida</Text>
             <BikePicker
@@ -451,7 +475,22 @@ export function RideDetailScreen({ id }: { id: string }) {
         </Card>
       )}
 
-      {derived?.speed ? (
+      {kind === 'run' && derived?.pace ? (
+        <Card>
+          <Text style={s.h3}>Ritmo</Text>
+          <LineChart
+            x={derived.d}
+            series={[{ label: 'Ritmo', values: derived.pace, color: t.metric.speed, format: (v) => `${formatPace(1000 / (v * 60))} /km` }]}
+            formatX={kmLabel}
+            formatTick={(v) => formatPace(1000 / (v * 60))}
+            minSpan={1}
+            reference={{ value: ride.movingSec > 0 && ride.distance > 0 ? (ride.movingSec / ride.distance) * (1000 / 60) : 0, label: 'medio' }}
+            height={150}
+            a11yLabel={`Ritmo a lo largo del recorrido: medio ${formatPace(ride.movingSec > 0 ? ride.distance / ride.movingSec : 0)} por kilómetro`}
+          />
+          <Text style={s.muted}>Más arriba es más lento.</Text>
+        </Card>
+      ) : derived?.speed ? (
         <Card>
           <Text style={s.h3}>Velocidad</Text>
           <LineChart
@@ -522,7 +561,7 @@ export function RideDetailScreen({ id }: { id: string }) {
                 <View key={dist} style={l.effort} accessible accessibilityLabel={`${formatEffortDistance(dist)} en ${formatDuration(sec)}${isRecord ? ', récord personal' : ''}`}>
                   <Text style={[s.body, l.effortDist]}>{formatEffortDistance(dist)}</Text>
                   <Text style={l.effortTime}>{formatDuration(sec)}</Text>
-                  <Text style={[s.muted, s.flex]}>{formatKmh(dist / sec)} km/h</Text>
+                  <Text style={[s.muted, s.flex]}>{kind === 'run' ? `${formatPace(dist / sec)} /km` : `${formatKmh(dist / sec)} km/h`}</Text>
                   {isRecord ? <Chip icon="emoji_events" label="Récord" color={t.warn} /> : null}
                 </View>
               );

@@ -2,6 +2,7 @@ import { periodStart } from './periods';
 import type { PeriodKind } from './periods';
 import { rideElevation } from './rides';
 import type { RideRecord } from './rides';
+import type { TrainSport } from './sport';
 
 /** Un récord y la salida (o el período) donde se logró. */
 export interface RecordEntry {
@@ -16,7 +17,7 @@ export interface Records {
   maxAltitude: RecordEntry | null;
   maxSpeed: RecordEntry | null;
   longestMoving: RecordEntry | null;
-  /** Mayor velocidad media en movimiento en salidas de al menos 10 km (m/s). */
+  /** Mayor velocidad media en movimiento en salidas de al menos 10 km (5 km al correr), en m/s. */
   fastestAvgSpeed: RecordEntry | null;
   /** Mejor tiempo de cada distancia estándar (segundos). */
   bestEfforts: Record<number, RecordEntry>;
@@ -29,6 +30,12 @@ export interface Records {
 
 /** Distancia mínima para que la velocidad media de una salida cuente como récord. */
 export const FASTEST_AVG_MIN_DISTANCE = 10000;
+/** Al correr, el mejor ritmo medio cuenta desde los 5 km. */
+export const FASTEST_AVG_MIN_DISTANCE_RUN = 5000;
+
+export function fastestAvgMinDistance(sport: TrainSport): number {
+  return sport === 'run' ? FASTEST_AVG_MIN_DISTANCE_RUN : FASTEST_AVG_MIN_DISTANCE;
+}
 
 function better(cur: RecordEntry | null, value: number | null, r: RideRecord, lower = false): RecordEntry | null {
   if (value === null || !Number.isFinite(value) || value <= 0) return cur;
@@ -51,7 +58,8 @@ function biggest(rides: RideRecord[], kind: PeriodKind): { distance: number; sta
  * Récords de todo el historial. Recorre las salidas de la más vieja a la más nueva: si dos
  * empatan, el récord queda en la más vieja (igual que el motor de premios).
  */
-export function records(input: RideRecord[]): Records {
+export function records(input: RideRecord[], sport: TrainSport = 'bike'): Records {
+  const minAvg = fastestAvgMinDistance(sport);
   const rides = [...input].sort((a, b) => a.startT - b.startT || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const out: Records = {
     longestDistance: null,
@@ -72,7 +80,7 @@ export function records(input: RideRecord[]): Records {
     out.maxAltitude = better(out.maxAltitude, e.maxAltitude, r);
     out.maxSpeed = better(out.maxSpeed, r.maxSpeed, r);
     out.longestMoving = better(out.longestMoving, r.movingSec, r);
-    if (r.distance >= FASTEST_AVG_MIN_DISTANCE && r.movingSec > 0) {
+    if (r.distance >= minAvg && r.movingSec > 0) {
       out.fastestAvgSpeed = better(out.fastestAvgSpeed, r.distance / r.movingSec, r);
     }
     for (const [k, sec] of Object.entries(r.efforts ?? {})) {

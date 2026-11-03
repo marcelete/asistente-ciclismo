@@ -5,6 +5,7 @@ import type { ElevationStats, ProfilePoint } from '../core/elevation/profile';
 import type { Goal } from '../core/goals/goals';
 import { sanitizeHistogram } from '../core/load/hrStats';
 import type { RideRecord } from '../core/stats/rides';
+import { sanitizeOverride, sanitizeSport, sportOf } from '../core/stats/sport';
 import { packProfile, unpackProfile } from './profileCodec';
 
 /**
@@ -111,6 +112,42 @@ const MIGRATIONS: string[] = [
      alt REAL NOT NULL,
      PRIMARY KEY (cy, cx)
    );`,
+  // 5: entrenador (plan por periodización, sesiones, registros de los bloques y bienestar).
+  `CREATE TABLE IF NOT EXISTS coach_plan (
+     id INTEGER PRIMARY KEY NOT NULL,
+     macro TEXT NOT NULL,
+     created_t INTEGER NOT NULL
+   );
+   CREATE TABLE IF NOT EXISTS coach_sessions (
+     date TEXT NOT NULL,
+     workout_id TEXT NOT NULL,
+     status TEXT NOT NULL,
+     ride_id TEXT,
+     rpe REAL,
+     minutes REAL,
+     note TEXT,
+     done_t INTEGER,
+     PRIMARY KEY (date, workout_id)
+   );
+   CREATE TABLE IF NOT EXISTS coach_logs (
+     date TEXT NOT NULL,
+     workout_id TEXT NOT NULL,
+     block INTEGER NOT NULL,
+     seconds REAL NOT NULL,
+     avg_value REAL,
+     in_range REAL,
+     cv REAL,
+     PRIMARY KEY (date, workout_id, block)
+   );
+   CREATE TABLE IF NOT EXISTS wellness (
+     date TEXT PRIMARY KEY NOT NULL,
+     sleep INTEGER NOT NULL,
+     mood INTEGER NOT NULL,
+     fatigue INTEGER NOT NULL
+   );`,
+  // 6 (pedido 15): las metas son de un deporte. `rides.counted_override` suma el valor 2 (correr) sin cambiar la columna.
+  `ALTER TABLE goals ADD COLUMN sport TEXT NOT NULL DEFAULT 'bike';
+   ALTER TABLE rides ADD COLUMN avg_cadence REAL;`,
 ];
 
 /**
@@ -189,6 +226,7 @@ interface RideRow {
   analysis: number;
   bike_id: string | null;
   counted_override: number | null;
+  avg_cadence: number | null;
 }
 
 /** JSON guardado por la app; si está dañado se trata como vacío. */
@@ -227,7 +265,8 @@ export function loadRides(): RideRecord[] {
     efforts: sanitizeEfforts(parseJson(r.efforts)),
     analysis: r.analysis,
     bikeId: r.bike_id,
-    countedOverride: r.counted_override === 0 || r.counted_override === 1 ? r.counted_override : null,
+    countedOverride: sanitizeOverride(r.counted_override),
+    avgCadence: r.avg_cadence,
   }));
 }
 
@@ -251,6 +290,7 @@ export const ANALYSIS_COLUMNS = [
   'hr_hist',
   'efforts',
   'analysis',
+  'avg_cadence',
 ] as const;
 
 export function analysisValues(r: RideRecord): SQLite.SQLiteBindValue[] {
@@ -273,6 +313,7 @@ export function analysisValues(r: RideRecord): SQLite.SQLiteBindValue[] {
     r.hrHist ? JSON.stringify(r.hrHist) : null,
     r.efforts ? JSON.stringify(r.efforts) : null,
     r.analysis,
+    r.avgCadence ?? null,
   ];
 }
 
@@ -302,9 +343,9 @@ export async function saveNewRide(a: RideAnalysis): Promise<boolean> {
     added = res.changes > 0;
     if (added) {
       writeProfile(d, a.record.id, a.profile, allDem(a.profile));
-      // La bici por defecto se asigna a cada salida que entra.
+      // La bici por defecto se asigna a cada salida en bici que entra (una carrera no tiene bici).
       const def = d.getFirstSync<{ id: string }>('SELECT id FROM bikes WHERE is_default = 1 AND retired = 0');
-      if (def) d.runSync('UPDATE rides SET bike_id = ? WHERE id = ?', [def.id, a.record.id]);
+      if (def && sportOf(a.record) === 'bike') d.runSync('UPDATE rides SET bike_id = ? WHERE id = ?', [def.id, a.record.id]);
     }
   });
   return added;
@@ -373,15 +414,18 @@ export async function saveRideDem(rideId: string, dem: ElevationStats): Promise<
 }
 
 export function loadGoals(): Goal[] {
-  return conn().getAllSync<Goal>('SELECT id, period, metric, target FROM goals ORDER BY rowid');
+  return conn()
+    .getAllSync<Goal & { sport: unknown }>('SELECT id, period, metric, target, sport FROM goals ORDER BY rowid')
+    .map((g) => ({ ...g, sport: sanitizeSport(g.sport) }));
 }
 
 export async function saveGoal(g: Goal): Promise<void> {
-  await conn().runAsync('INSERT OR REPLACE INTO goals (id, period, metric, target) VALUES (?, ?, ?, ?)', [
+  await conn().runAsync('INSERT OR REPLACE INTO goals (id, period, metric, target, sport) VALUES (?, ?, ?, ?, ?)', [
     g.id,
     g.period,
     g.metric,
     g.target,
+    g.sport ?? 'bike',
   ]);
 }
 
@@ -446,6 +490,10 @@ const DATA_TABLES = [
   'bikes',
   'bike_parts',
   'dem_cells',
+  'coach_plan',
+  'coach_sessions',
+  'coach_logs',
+  'wellness',
 ];
 
 /**

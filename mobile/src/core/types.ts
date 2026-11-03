@@ -12,6 +12,8 @@ export interface Sample {
   hr: number | null;
   /** Precisión horizontal estimada del GPS en metros. */
   acc: number | null;
+  /** Cadencia del sensor (pedaleo o pasos por minuto), si el GPX la trae. */
+  cad?: number | null;
 }
 
 export interface LiveSnapshot {

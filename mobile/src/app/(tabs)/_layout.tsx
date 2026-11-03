@@ -43,7 +43,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="index" options={{ title: 'Resumen', tabBarIcon: tabIcon('bar_chart') }} />
       <Tabs.Screen name="salidas" options={{ title: 'Salidas', tabBarIcon: tabIcon('directions_bike') }} />
       <Tabs.Screen name="logros" options={{ title: 'Logros', tabBarIcon: tabIcon('emoji_events') }} />
-      <Tabs.Screen name="metas" options={{ title: 'Metas', tabBarIcon: tabIcon('flag') }} />
+      <Tabs.Screen name="metas" options={{ title: 'Entrenar', tabBarIcon: tabIcon('fitness_center') }} />
       <Tabs.Screen name="ajustes" options={{ title: 'Ajustes', tabBarIcon: tabIcon('settings') }} />
     </Tabs>
   );
